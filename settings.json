@@ -1,0 +1,10 @@
+{
+  "autoRecord": true,
+  "captureBodies": true,
+  "maxBodySizeBytes": 5242880,
+  "redactEnabled": false,
+  "redactHeaders": [],
+  "homeUrl": "https://httpbin.org",
+  "storageDir": "recordings",
+  "theme": "dark"
+}
