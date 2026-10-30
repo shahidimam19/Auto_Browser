@@ -18,7 +18,7 @@ function loadSettings() {
   } catch (e) {
     console.error('Failed reading settings.json:', e);
     settings = {
-      autoRecord: true,
+      autoRecord: false,
       captureBodies: true,
       maxBodySizeBytes: 5242880,
       redactEnabled: false,
@@ -123,8 +123,8 @@ function broadcastBrowserState() {
     url: wc.getURL(),
     title: wc.getTitle(),
     isLoading: wc.isLoading(),
-    canGoBack: wc.canGoBack(),
-    canGoForward: wc.canGoForward()
+    canGoBack: wc.navigationHistory ? wc.navigationHistory.canGoBack() : (wc.canGoBack ? wc.canGoBack() : false),
+    canGoForward: wc.navigationHistory ? wc.navigationHistory.canGoForward() : (wc.canGoForward ? wc.canGoForward() : false)
   });
 }
 
@@ -193,6 +193,29 @@ function createMainWindow() {
 
   // Load UI into mainWindow
   mainWindow.loadFile(path.join(__dirname, 'ui', 'index.html'));
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('UI finished load successfully');
+  });
+
+  mainWindow.webContents.on('did-fail-load', (e, code, desc) => {
+    console.error('UI failed to load:', code, desc);
+  });
+
+  mainWindow.webContents.on('console-message', (e, level, message, line, sourceId) => {
+    console.log(`[UI Console] ${message}`);
+  });
+
+  mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.setAlwaysOnTop(true);
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(false);
+    }
+  }, 1000);
+  console.log('mainWindow created and show() called, isVisible:', mainWindow.isVisible());
 
   mainWindow.on('closed', () => {
     if (recorder) recorder.stopSession();
@@ -456,15 +479,37 @@ function startLocalAutomationServer() {
     res.end();
   });
 
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn('Local automation server: port 4045 already in use, skipping.');
+    } else {
+      console.error('Local automation server error:', err);
+    }
+  });
+
   server.listen(4045, '127.0.0.1', () => {
     console.log('Local automation server listening on http://127.0.0.1:4045');
   });
 }
 
-app.whenReady().then(() => {
-  createMainWindow();
-  startLocalAutomationServer();
-});
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
+  app.whenReady().then(() => {
+    createMainWindow();
+    startLocalAutomationServer();
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "node run.js",
     "test": "node smoke_test.js"
   },
   "keywords": [],

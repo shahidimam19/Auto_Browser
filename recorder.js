@@ -7,7 +7,7 @@ class NetworkRecorder {
     this.baseDir = baseDir;
     this.recordingsDir = path.join(baseDir, settings.storageDir || 'recordings');
     this.settings = Object.assign({
-      autoRecord: true,
+      autoRecord: false,
       captureBodies: true,
       maxBodySizeBytes: 5 * 1024 * 1024,
       redactHeaders: [],

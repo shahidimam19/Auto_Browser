@@ -265,6 +265,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (session) {
       activeSessionId = session.id;
       activeSessionIdElem.textContent = session.id;
+    } else if (status === 'idle') {
+      activeSessionId = null;
+      activeSessionIdElem.textContent = 'None';
     }
 
     if (status === 'recording') {

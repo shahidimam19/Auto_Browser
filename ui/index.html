@@ -65,12 +65,12 @@
     <section id="recorder-bar">
       <div class="recorder-left">
         <!-- Record Button & Indicator -->
-        <button id="btn-record-toggle" class="rec-btn recording" title="Toggle Recording">
+        <button id="btn-record-toggle" class="rec-btn idle" title="Toggle Recording">
           <span class="rec-icon"></span>
-          <span id="rec-btn-text">Stop Recording</span>
+          <span id="rec-btn-text">Start Recording</span>
         </button>
 
-        <button id="btn-pause-toggle" class="ctrl-btn" title="Pause / Resume Recording">
+        <button id="btn-pause-toggle" class="ctrl-btn" title="Pause / Resume Recording" disabled>
           <svg viewBox="0 0 24 24" width="14" height="14" id="pause-icon"><path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
           <span id="pause-btn-text">Pause</span>
         </button>
@@ -78,7 +78,7 @@
         <div class="session-badge">
           <span class="pulse-indicator"></span>
           <span class="session-label">Session:</span>
-          <span id="active-session-id" class="session-name">session_001</span>
+          <span id="active-session-id" class="session-name">None</span>
           <span id="recording-timer" class="rec-timer">00:00:00</span>
         </div>
       </div>
