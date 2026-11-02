@@ -1437,6 +1437,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       setPickerState(false);
       addLogEntry('Cancel Pick', '', true);
     });
+
+    window.api.interaction.onPhoneCaptured((data) => {
+      toggleInteractionPanel(true);
+      addLogEntry('📞 Phone No', data.phone, true);
+    });
   }
 
   // Keyboard shortcut: Ctrl+Shift+C to toggle element picker

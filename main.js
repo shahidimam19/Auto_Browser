@@ -77,6 +77,10 @@ async function attachCDP(webContents) {
             }
           } catch (e) {}
         }
+        if (params.request.url && params.request.url.startsWith('tel:')) {
+          const phone = params.request.url.replace(/^tel:\+?/, '').trim();
+          sendToUI('interaction:phoneCaptured', { phone, rawUrl: params.request.url });
+        }
         const record = recorder.recordRequest(params);
         if (record) {
           sendToUI('network:event', { type: 'request', data: record, stats: recorder.stats });
@@ -211,6 +215,16 @@ function createMainWindow() {
       } else if (message === '__AB_PICKER_CANCELLED__') {
         sendToUI('interaction:pickerCancelled', {});
       }
+    }
+  });
+
+  // Intercept tel: phone links and dialer triggers to capture mobile numbers directly
+  bwc.on('will-navigate', (event, navUrl) => {
+    if (navUrl && navUrl.startsWith('tel:')) {
+      event.preventDefault();
+      const phone = navUrl.replace(/^tel:\+?/, '').trim();
+      console.log('[Auto_Browser] Captured phone number from click:', phone);
+      sendToUI('interaction:phoneCaptured', { phone, rawUrl: navUrl });
     }
   });
 

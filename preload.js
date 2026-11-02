@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld('api', {
       const handler = () => callback();
       ipcRenderer.on('interaction:pickerCancelled', handler);
       return () => ipcRenderer.removeListener('interaction:pickerCancelled', handler);
+    },
+    onPhoneCaptured: (callback) => {
+      const handler = (event, data) => callback(data);
+      ipcRenderer.on('interaction:phoneCaptured', handler);
+      return () => ipcRenderer.removeListener('interaction:phoneCaptured', handler);
     }
   },
 
