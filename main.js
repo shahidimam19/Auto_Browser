@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, shell, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -139,12 +139,16 @@ function createMainWindow() {
     minHeight: 650,
     title: 'Auto_Browser - Custom Chromium Browser & Network Recorder',
     backgroundColor: '#0d1117',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
     }
   });
+
+  Menu.setApplicationMenu(null);
+  mainWindow.setMenu(null);
 
   // Create embedded Chromium Browser view
   browserView = new WebContentsView({
