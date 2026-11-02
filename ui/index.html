@@ -40,6 +40,14 @@
       </div>
 
       <div class="layout-controls">
+        <button id="btn-pick-element" class="pick-btn" title="Pick Element on Page (Inspect / Click)">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+          <span>Pick</span>
+        </button>
+        <button id="btn-toggle-interaction" class="pick-btn" title="Toggle Button Controls & Inspector Panel">
+          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+          <span>Controls</span>
+        </button>
         <div class="layout-group" title="Layout Mode">
           <button id="btn-layout-split-h" class="layout-btn active" title="Split Horizontal">
             <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 3h18v8H3zm0 10h18v8H3z"/></svg>
@@ -338,6 +346,112 @@
         </div>
 
       </section>
+
+      <!-- Interaction Panel (Element Inspector & Button Controls) -->
+      <aside id="interaction-panel">
+        <div class="interaction-header">
+          <h4>🎯 Button Controls & Inspector</h4>
+          <button class="close-panel-btn" id="btn-close-interaction" title="Close panel">&times;</button>
+        </div>
+
+        <!-- Element Info Card -->
+        <div class="element-info-card" id="element-info-card">
+          <div class="no-element" id="no-element-hint">
+            <svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+            <span>Click <strong>Pick</strong> in the toolbar to point & click any button/element on the website, or enter a CSS selector below.</span>
+          </div>
+          <div id="element-info-display" class="hidden">
+            <div class="element-tag-display" id="element-tag-display">
+              <!-- Dynamically populated -->
+            </div>
+            <div class="element-selector-row">
+              <label>CSS</label>
+              <code id="element-css-selector" title="Click to copy">—</code>
+              <button class="copy-sel-btn" id="btn-copy-css-sel" title="Copy selector">
+                <svg viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+              </button>
+            </div>
+            <div class="element-selector-row">
+              <label>XPath</label>
+              <code id="element-xpath" title="Click to copy">—</code>
+              <button class="copy-sel-btn" id="btn-copy-xpath" title="Copy XPath">
+                <svg viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Selector Input -->
+        <div class="quick-selector-section">
+          <h5>CSS Selector Target</h5>
+          <div class="quick-selector-row">
+            <input type="text" id="interaction-selector-input" placeholder="#btn-login, button.primary" spellcheck="false" />
+            <button id="btn-inspect-selector" title="Fetch element info">🔍</button>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="action-buttons">
+          <h5>Element Actions</h5>
+          <div class="action-grid">
+            <button class="action-btn primary-action" id="btn-action-click" disabled>
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 4l16 6.5L12.3 12.3 10.5 20z"/></svg>
+              Click
+            </button>
+            <button class="action-btn" id="btn-action-dblclick" disabled>
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 4l16 6.5L12.3 12.3 10.5 20z"/></svg>
+              Double-Click
+            </button>
+            <button class="action-btn" id="btn-action-rightclick" disabled>
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 4l16 6.5L12.3 12.3 10.5 20z"/></svg>
+              Right-Click
+            </button>
+            <button class="action-btn" id="btn-action-hover" disabled>
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+              Hover
+            </button>
+            <button class="action-btn" id="btn-action-scroll" disabled>
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 5.83L15.17 9l1.41-1.41L12 3 7.41 7.59 8.83 9 12 5.83zm0 12.34L8.83 15l-1.41 1.41L12 21l4.59-4.59L15.17 15 12 18.17z"/></svg>
+              Scroll To
+            </button>
+            <button class="action-btn" id="btn-action-getinfo" disabled>
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+              Get Details
+            </button>
+          </div>
+        </div>
+
+        <!-- Type Text Section -->
+        <div class="type-input-section">
+          <h5>Type Text into Element</h5>
+          <div class="type-input-row">
+            <input type="text" id="interaction-type-input" placeholder="Text to type..." spellcheck="false" />
+            <button id="btn-action-type" disabled>Type</button>
+          </div>
+          <div class="type-input-row" style="margin-top: 6px;">
+            <select id="interaction-key-select" style="flex:1; padding:6px 10px; border:1px solid var(--border-subtle); border-radius:6px; background:var(--bg-surface); color:var(--text-primary); font-size:12px;">
+              <option value="">Select Key to Press...</option>
+              <option value="Enter">Enter</option>
+              <option value="Tab">Tab</option>
+              <option value="Escape">Escape</option>
+              <option value="Backspace">Backspace</option>
+              <option value="Delete">Delete</option>
+              <option value="ArrowDown">Arrow Down</option>
+              <option value="ArrowUp">Arrow Up</option>
+              <option value="Space">Space</option>
+            </select>
+            <button id="btn-action-presskey">Press</button>
+          </div>
+        </div>
+
+        <!-- Interaction Log -->
+        <div class="interaction-log">
+          <h5>Action History</h5>
+          <div class="log-entries" id="interaction-log-entries">
+            <div class="log-empty">No actions performed yet</div>
+          </div>
+        </div>
+      </aside>
     </main>
 
     <!-- Modal: Past Saved Sessions Drawer -->

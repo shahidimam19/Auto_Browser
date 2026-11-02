@@ -3,10 +3,12 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const NetworkRecorder = require('./recorder');
+const InteractionManager = require('./interaction');
 
 let mainWindow = null;
 let browserView = null;
 let recorder = null;
+let interactionManager = null;
 let settings = {};
 const settingsPath = path.join(__dirname, 'settings.json');
 
@@ -110,6 +112,13 @@ async function attachCDP(webContents) {
       maxTotalBufferSize: 50 * 1024 * 1024,
     });
 
+    try {
+      await webContents.debugger.sendCommand('DOM.enable');
+      await webContents.debugger.sendCommand('Runtime.enable');
+    } catch (e) {
+      console.warn('DOM/Runtime enable notice:', e.message);
+    }
+
     console.log('CDP attached and Network.enable initiated.');
   } catch (err) {
     console.error('Error attaching CDP:', err);
@@ -185,6 +194,25 @@ function createMainWindow() {
 
   // Attach Chrome DevTools Protocol to browser view
   attachCDP(bwc);
+
+  // Initialize interaction manager for button controls & element picker
+  interactionManager = new InteractionManager(bwc, __dirname);
+
+  // Intercept element picker events from browserView
+  bwc.on('console-message', (e, level, message) => {
+    if (typeof message === 'string') {
+      if (message.startsWith('__AB_ELEMENT_PICKED__:')) {
+        try {
+          const elementData = JSON.parse(message.slice(22));
+          sendToUI('interaction:elementSelected', elementData);
+        } catch (err) {
+          console.error('Failed to parse picked element:', err);
+        }
+      } else if (message === '__AB_PICKER_CANCELLED__') {
+        sendToUI('interaction:pickerCancelled', {});
+      }
+    }
+  });
 
   // Load the initial home page
   const homeUrl = settings.homeUrl || 'https://httpbin.org';
@@ -406,8 +434,103 @@ ipcMain.handle('settings:save', (event, newSettings) => {
   return settings;
 });
 
+// Element Interaction & Button Control IPC Handlers
+ipcMain.handle('interaction:startPicker', async () => {
+  if (interactionManager) return await interactionManager.startPicker();
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:stopPicker', async () => {
+  if (interactionManager) return await interactionManager.stopPicker();
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:click', async (event, target) => {
+  if (interactionManager) return await interactionManager.click(target);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:dblclick', async (event, target) => {
+  if (interactionManager) return await interactionManager.dblclick(target);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:rightclick', async (event, target) => {
+  if (interactionManager) return await interactionManager.rightclick(target);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:hover', async (event, target) => {
+  if (interactionManager) return await interactionManager.hover(target);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:type', async (event, target) => {
+  if (interactionManager) return await interactionManager.type(target);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:pressKey', async (event, key) => {
+  if (interactionManager) return await interactionManager.pressKey(key);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:scroll', async (event, target) => {
+  if (interactionManager) return await interactionManager.scroll(target);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:getElementInfo', async (event, selector) => {
+  if (interactionManager) return await interactionManager.getElementInfo(selector);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:setValue', async (event, selector, value) => {
+  if (interactionManager) return await interactionManager.setValue(selector, value);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:selectOption', async (event, selector, value) => {
+  if (interactionManager) return await interactionManager.selectOption(selector, value);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:getAttribute', async (event, selector, attribute) => {
+  if (interactionManager) return await interactionManager.getAttribute(selector, attribute);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:waitForElement', async (event, selector, timeout) => {
+  if (interactionManager) return await interactionManager.waitForElement(selector, timeout);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
+ipcMain.handle('interaction:evaluate', async (event, expression) => {
+  if (interactionManager) return await interactionManager.evaluate(expression);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
 function startLocalAutomationServer() {
-  const server = http.createServer((req, res) => {
+  const jsonResponse = (res, statusCode, data) => {
+    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+  };
+
+  const parseBody = (req) => {
+    return new Promise((resolve, reject) => {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => {
+        try {
+          resolve(JSON.parse(body || '{}'));
+        } catch (e) {
+          reject(new Error('Invalid JSON'));
+        }
+      });
+    });
+  };
+
+  const server = http.createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -417,70 +540,123 @@ function startLocalAutomationServer() {
       return res.end();
     }
 
-    if (req.url === '/click' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', async () => {
-        try {
-          const { selector } = JSON.parse(body || '{}');
-          if (!selector) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: 'Missing selector' }));
-          }
-          if (browserView && !browserView.webContents.isDestroyed()) {
-            const script = `
-              (() => {
-                const el = document.querySelector(${JSON.stringify(selector)});
-                if (el) {
-                  el.click();
-                  return { clicked: true, tag: el.tagName, href: el.href || null };
-                }
-                return { clicked: false, error: 'Element not found' };
-              })()
-            `;
-            const result = await browserView.webContents.executeJavaScript(script);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ success: true, result }));
-          } else {
-            res.writeHead(503, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: 'Browser view not available' }));
-          }
-        } catch (e) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: e.message }));
-        }
-      });
-      return;
+    if (req.method !== 'POST') {
+      return jsonResponse(res, 404, { error: 'Not found' });
     }
 
-    if (req.url === '/exec' && req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', async () => {
-        try {
-          const { script } = JSON.parse(body || '{}');
-          if (!script) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: 'Missing script' }));
+    try {
+      const data = await parseBody(req);
+
+      if (!interactionManager) {
+        return jsonResponse(res, 503, { error: 'Interaction manager not available' });
+      }
+
+      switch (req.url) {
+        case '/navigate': {
+          let target = (data.url || '').trim();
+          if (!target) return jsonResponse(res, 400, { error: 'Missing url parameter' });
+          if (!/^https?:\/\//i.test(target) && !/^about:/i.test(target)) {
+            target = 'https://' + target;
           }
           if (browserView && !browserView.webContents.isDestroyed()) {
-            const result = await browserView.webContents.executeJavaScript(script);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ success: true, result }));
-          } else {
-            res.writeHead(503, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: 'Browser view not available' }));
+            browserView.webContents.loadURL(target);
+            return jsonResponse(res, 200, { success: true, url: target });
           }
-        } catch (e) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: e.message }));
+          return jsonResponse(res, 503, { error: 'Browser view not available' });
         }
-      });
-      return;
-    }
 
-    res.writeHead(404);
-    res.end();
+        case '/click': {
+          const target = data.selector ? { selector: data.selector } : (typeof data.x === 'number' ? { x: data.x, y: data.y } : null);
+          if (!target) return jsonResponse(res, 400, { error: 'Provide selector or x, y coordinates' });
+          const result = await interactionManager.click(target);
+          return jsonResponse(res, result.success ? 200 : 400, result);
+        }
+
+        case '/dblclick': {
+          const target = data.selector ? { selector: data.selector } : (typeof data.x === 'number' ? { x: data.x, y: data.y } : null);
+          if (!target) return jsonResponse(res, 400, { error: 'Provide selector or x, y coordinates' });
+          const result = await interactionManager.dblclick(target);
+          return jsonResponse(res, result.success ? 200 : 400, result);
+        }
+
+        case '/rightclick': {
+          const target = data.selector ? { selector: data.selector } : (typeof data.x === 'number' ? { x: data.x, y: data.y } : null);
+          if (!target) return jsonResponse(res, 400, { error: 'Provide selector or x, y coordinates' });
+          const result = await interactionManager.rightclick(target);
+          return jsonResponse(res, result.success ? 200 : 400, result);
+        }
+
+        case '/hover': {
+          const target = data.selector ? { selector: data.selector } : (typeof data.x === 'number' ? { x: data.x, y: data.y } : null);
+          if (!target) return jsonResponse(res, 400, { error: 'Provide selector or x, y coordinates' });
+          const result = await interactionManager.hover(target);
+          return jsonResponse(res, result.success ? 200 : 400, result);
+        }
+
+        case '/type': {
+          if (!data.text) return jsonResponse(res, 400, { error: 'Missing text parameter' });
+          const result = await interactionManager.type({ selector: data.selector, text: data.text });
+          return jsonResponse(res, result.success ? 200 : 400, result);
+        }
+
+        case '/pressKey': {
+          if (!data.key) return jsonResponse(res, 400, { error: 'Missing key parameter' });
+          const result = await interactionManager.pressKey(data.key);
+          return jsonResponse(res, result.success ? 200 : 400, result);
+        }
+
+        case '/scroll': {
+          const result = await interactionManager.scroll({
+            selector: data.selector,
+            deltaX: data.deltaX || 0,
+            deltaY: data.deltaY || 0
+          });
+          return jsonResponse(res, result.success ? 200 : 400, result);
+        }
+
+        case '/elementInfo': {
+          if (!data.selector) return jsonResponse(res, 400, { error: 'Missing selector parameter' });
+          const result = await interactionManager.getElementInfo(data.selector);
+          return jsonResponse(res, result.success ? 200 : 404, result);
+        }
+
+        case '/waitForElement': {
+          if (!data.selector) return jsonResponse(res, 400, { error: 'Missing selector parameter' });
+          const result = await interactionManager.waitForElement(data.selector, data.timeout || 5000);
+          return jsonResponse(res, result.success ? 200 : 408, result);
+        }
+
+        case '/setValue': {
+          if (!data.selector || data.value === undefined) return jsonResponse(res, 400, { error: 'Missing selector or value' });
+          const result = await interactionManager.setValue(data.selector, data.value);
+          return jsonResponse(res, result.success ? 200 : 400, result);
+        }
+
+        case '/selectOption': {
+          if (!data.selector || data.value === undefined) return jsonResponse(res, 400, { error: 'Missing selector or value' });
+          const result = await interactionManager.selectOption(data.selector, data.value);
+          return jsonResponse(res, result.success ? 200 : 400, result);
+        }
+
+        case '/exec': {
+          if (!data.script) return jsonResponse(res, 400, { error: 'Missing script parameter' });
+          if (browserView && !browserView.webContents.isDestroyed()) {
+            try {
+              const result = await browserView.webContents.executeJavaScript(data.script);
+              return jsonResponse(res, 200, { success: true, result });
+            } catch (err) {
+              return jsonResponse(res, 500, { error: err.message });
+            }
+          }
+          return jsonResponse(res, 503, { error: 'Browser view not available' });
+        }
+
+        default:
+          return jsonResponse(res, 404, { error: 'Unknown endpoint: ' + req.url });
+      }
+    } catch (e) {
+      return jsonResponse(res, 400, { error: e.message });
+    }
   });
 
   server.on('error', (err) => {

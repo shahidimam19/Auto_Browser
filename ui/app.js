@@ -1130,4 +1130,320 @@ document.addEventListener('DOMContentLoaded', async () => {
     modalSettings.classList.add('hidden');
     syncBrowserBounds();
   });
+
+  // =========================================================================
+  // Element Picker & Button Control Feature
+  // =========================================================================
+  const btnPickElement = document.getElementById('btn-pick-element');
+  const btnToggleInteraction = document.getElementById('btn-toggle-interaction');
+  const interactionPanel = document.getElementById('interaction-panel');
+  const btnCloseInteraction = document.getElementById('btn-close-interaction');
+
+  const noElementHint = document.getElementById('no-element-hint');
+  const elementInfoDisplay = document.getElementById('element-info-display');
+  const elementTagDisplay = document.getElementById('element-tag-display');
+  const elementCssSelector = document.getElementById('element-css-selector');
+  const elementXpath = document.getElementById('element-xpath');
+  const btnCopyCssSel = document.getElementById('btn-copy-css-sel');
+  const btnCopyXpath = document.getElementById('btn-copy-xpath');
+
+  const interactionSelectorInput = document.getElementById('interaction-selector-input');
+  const btnInspectSelector = document.getElementById('btn-inspect-selector');
+
+  const btnActionClick = document.getElementById('btn-action-click');
+  const btnActionDblclick = document.getElementById('btn-action-dblclick');
+  const btnActionRightclick = document.getElementById('btn-action-rightclick');
+  const btnActionHover = document.getElementById('btn-action-hover');
+  const btnActionScroll = document.getElementById('btn-action-scroll');
+  const btnActionGetinfo = document.getElementById('btn-action-getinfo');
+
+  const interactionTypeInput = document.getElementById('interaction-type-input');
+  const btnActionType = document.getElementById('btn-action-type');
+  const interactionKeySelect = document.getElementById('interaction-key-select');
+  const btnActionPresskey = document.getElementById('btn-action-presskey');
+  const interactionLogEntries = document.getElementById('interaction-log-entries');
+
+  let isPickerActive = false;
+  let currentElement = null;
+  let currentSelector = '';
+
+  function toggleInteractionPanel(force) {
+    const isVisible = force !== undefined ? force : !interactionPanel.classList.contains('visible');
+    interactionPanel.classList.toggle('visible', isVisible);
+    btnToggleInteraction.classList.toggle('active', isVisible);
+    setTimeout(syncBrowserBounds, 50);
+  }
+
+  function setPickerState(active) {
+    isPickerActive = active;
+    btnPickElement.classList.toggle('active', active);
+    const span = btnPickElement.querySelector('span');
+    if (span) span.textContent = active ? 'Picking...' : 'Pick';
+  }
+
+  async function startElementPicker() {
+    if (!window.api || !window.api.interaction) return;
+    setPickerState(true);
+    toggleInteractionPanel(true);
+    await window.api.interaction.startPicker();
+  }
+
+  async function stopElementPicker() {
+    if (!window.api || !window.api.interaction) return;
+    setPickerState(false);
+    await window.api.interaction.stopPicker();
+  }
+
+  function updateElementDisplay(info) {
+    if (!info) {
+      noElementHint.classList.remove('hidden');
+      elementInfoDisplay.classList.add('hidden');
+      enableActionButtons(false);
+      currentElement = null;
+      currentSelector = '';
+      return;
+    }
+
+    currentElement = info;
+    currentSelector = info.selector || '';
+
+    noElementHint.classList.add('hidden');
+    elementInfoDisplay.classList.remove('hidden');
+
+    const tagName = info.tagName || 'element';
+    const tagId = info.id ? `#${info.id}` : '';
+    const tagClass = info.className ? `.${info.className.trim().split(/\s+/).join('.')}` : '';
+    const textPreview = info.textContent ? info.textContent.substring(0, 60) : '';
+
+    elementTagDisplay.innerHTML = `
+      <span class="tag-name">&lt;${tagName}</span>
+      ${tagId ? `<span class="tag-id">${tagId}</span>` : ''}
+      ${tagClass ? `<span class="tag-class">${tagClass}</span>` : ''}
+      <span class="tag-name">&gt;</span>
+      ${textPreview ? `<span class="tag-text">"${escapeHtml(textPreview)}"</span>` : ''}
+    `;
+
+    elementCssSelector.textContent = info.selector || '—';
+    elementCssSelector.title = info.selector || '';
+    elementXpath.textContent = info.xpath || '—';
+    elementXpath.title = info.xpath || '';
+    interactionSelectorInput.value = info.selector || '';
+
+    enableActionButtons(true);
+  }
+
+  function enableActionButtons(enabled) {
+    btnActionClick.disabled = !enabled;
+    btnActionDblclick.disabled = !enabled;
+    btnActionRightclick.disabled = !enabled;
+    btnActionHover.disabled = !enabled;
+    btnActionScroll.disabled = !enabled;
+    btnActionGetinfo.disabled = !enabled;
+    btnActionType.disabled = !enabled;
+  }
+
+  function addLogEntry(action, target, success, details) {
+    const emptyHint = interactionLogEntries.querySelector('.log-empty');
+    if (emptyHint) emptyHint.remove();
+
+    const now = new Date();
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${success ? 'success' : 'error'}`;
+    entry.innerHTML = `
+      <span class="log-time">${timeStr}</span>
+      <span class="log-action">${escapeHtml(action)}</span>
+      <span class="log-target" title="${escapeHtml(target || '')}">${escapeHtml(target || '')}</span>
+    `;
+
+    interactionLogEntries.insertBefore(entry, interactionLogEntries.firstChild);
+    while (interactionLogEntries.children.length > 50) {
+      interactionLogEntries.removeChild(interactionLogEntries.lastChild);
+    }
+  }
+
+  // Toggle Picker Button
+  btnPickElement.addEventListener('click', async () => {
+    if (isPickerActive) {
+      await stopElementPicker();
+    } else {
+      await startElementPicker();
+    }
+  });
+
+  // Toggle Panel Button
+  btnToggleInteraction.addEventListener('click', () => {
+    toggleInteractionPanel();
+  });
+
+  // Close Panel Button
+  btnCloseInteraction.addEventListener('click', () => {
+    toggleInteractionPanel(false);
+  });
+
+  // Copy CSS Selector
+  btnCopyCssSel.addEventListener('click', () => {
+    if (currentSelector) {
+      navigator.clipboard.writeText(currentSelector);
+      btnCopyCssSel.style.color = '#10b981';
+      setTimeout(() => btnCopyCssSel.style.color = '', 1000);
+    }
+  });
+
+  // Copy XPath
+  btnCopyXpath.addEventListener('click', () => {
+    if (currentElement && currentElement.xpath) {
+      navigator.clipboard.writeText(currentElement.xpath);
+      btnCopyXpath.style.color = '#10b981';
+      setTimeout(() => btnCopyXpath.style.color = '', 1000);
+    }
+  });
+
+  // Inspect manual selector
+  async function inspectManualSelector() {
+    const sel = interactionSelectorInput.value.trim();
+    if (!sel || !window.api || !window.api.interaction) return;
+
+    btnInspectSelector.disabled = true;
+    const res = await window.api.interaction.getElementInfo(sel);
+    btnInspectSelector.disabled = false;
+
+    if (res && res.success && res.exists) {
+      updateElementDisplay(res);
+      addLogEntry('Found', sel, true);
+    } else {
+      addLogEntry('Not Found', sel, false);
+      alert(`Element not found for selector: ${sel}`);
+    }
+  }
+
+  btnInspectSelector.addEventListener('click', inspectManualSelector);
+  interactionSelectorInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') inspectManualSelector();
+  });
+
+  // Action: Click Button
+  btnActionClick.addEventListener('click', async () => {
+    const sel = currentSelector || interactionSelectorInput.value.trim();
+    if (!sel || !window.api || !window.api.interaction) return;
+
+    btnActionClick.disabled = true;
+    const res = await window.api.interaction.click({ selector: sel });
+    btnActionClick.disabled = false;
+
+    addLogEntry('Click', sel, res && res.success, res && res.error);
+  });
+
+  // Action: Double-Click Button
+  btnActionDblclick.addEventListener('click', async () => {
+    const sel = currentSelector || interactionSelectorInput.value.trim();
+    if (!sel || !window.api || !window.api.interaction) return;
+
+    btnActionDblclick.disabled = true;
+    const res = await window.api.interaction.dblclick({ selector: sel });
+    btnActionDblclick.disabled = false;
+
+    addLogEntry('Dbl-Click', sel, res && res.success, res && res.error);
+  });
+
+  // Action: Right-Click Button
+  btnActionRightclick.addEventListener('click', async () => {
+    const sel = currentSelector || interactionSelectorInput.value.trim();
+    if (!sel || !window.api || !window.api.interaction) return;
+
+    btnActionRightclick.disabled = true;
+    const res = await window.api.interaction.rightclick({ selector: sel });
+    btnActionRightclick.disabled = false;
+
+    addLogEntry('Right-Click', sel, res && res.success, res && res.error);
+  });
+
+  // Action: Hover
+  btnActionHover.addEventListener('click', async () => {
+    const sel = currentSelector || interactionSelectorInput.value.trim();
+    if (!sel || !window.api || !window.api.interaction) return;
+
+    btnActionHover.disabled = true;
+    const res = await window.api.interaction.hover({ selector: sel });
+    btnActionHover.disabled = false;
+
+    addLogEntry('Hover', sel, res && res.success, res && res.error);
+  });
+
+  // Action: Scroll To
+  btnActionScroll.addEventListener('click', async () => {
+    const sel = currentSelector || interactionSelectorInput.value.trim();
+    if (!sel || !window.api || !window.api.interaction) return;
+
+    btnActionScroll.disabled = true;
+    const res = await window.api.interaction.scroll({ selector: sel, deltaY: 200 });
+    btnActionScroll.disabled = false;
+
+    addLogEntry('Scroll', sel, res && res.success, res && res.error);
+  });
+
+  // Action: Get Details
+  btnActionGetinfo.addEventListener('click', async () => {
+    const sel = currentSelector || interactionSelectorInput.value.trim();
+    if (!sel || !window.api || !window.api.interaction) return;
+
+    const res = await window.api.interaction.getElementInfo(sel);
+    if (res && res.success) {
+      updateElementDisplay(res);
+      addLogEntry('Info', sel, true);
+    } else {
+      addLogEntry('Info Fail', sel, false);
+    }
+  });
+
+  // Action: Type Text
+  btnActionType.addEventListener('click', async () => {
+    const sel = currentSelector || interactionSelectorInput.value.trim();
+    const text = interactionTypeInput.value;
+    if (!sel || !text || !window.api || !window.api.interaction) return;
+
+    btnActionType.disabled = true;
+    const res = await window.api.interaction.type({ selector: sel, text });
+    btnActionType.disabled = false;
+
+    addLogEntry(`Type "${text.substring(0, 15)}"`, sel, res && res.success, res && res.error);
+  });
+
+  interactionTypeInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      btnActionType.click();
+    }
+  });
+
+  // Action: Press Key
+  btnActionPresskey.addEventListener('click', async () => {
+    const key = interactionKeySelect.value;
+    if (!key || !window.api || !window.api.interaction) return;
+
+    const res = await window.api.interaction.pressKey(key);
+    addLogEntry(`Key [${key}]`, '', res && res.success, res && res.error);
+  });
+
+  // Listen for Element Picked event from browserView
+  if (window.api && window.api.interaction) {
+    window.api.interaction.onElementSelected((info) => {
+      setPickerState(false);
+      updateElementDisplay(info);
+      addLogEntry('Picked', info.selector || info.tagName, true);
+    });
+
+    window.api.interaction.onPickerCancelled(() => {
+      setPickerState(false);
+      addLogEntry('Cancel Pick', '', true);
+    });
+  }
+
+  // Keyboard shortcut: Ctrl+Shift+C to toggle element picker
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
+      e.preventDefault();
+      btnPickElement.click();
+    }
+  });
 });

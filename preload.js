@@ -29,6 +29,35 @@ contextBridge.exposeInMainWorld('api', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
 
+  // Element Interaction & Button Controls
+  interaction: {
+    startPicker: () => ipcRenderer.invoke('interaction:startPicker'),
+    stopPicker: () => ipcRenderer.invoke('interaction:stopPicker'),
+    click: (target) => ipcRenderer.invoke('interaction:click', target),
+    dblclick: (target) => ipcRenderer.invoke('interaction:dblclick', target),
+    rightclick: (target) => ipcRenderer.invoke('interaction:rightclick', target),
+    hover: (target) => ipcRenderer.invoke('interaction:hover', target),
+    type: (target) => ipcRenderer.invoke('interaction:type', target),
+    pressKey: (key) => ipcRenderer.invoke('interaction:pressKey', key),
+    scroll: (target) => ipcRenderer.invoke('interaction:scroll', target),
+    getElementInfo: (selector) => ipcRenderer.invoke('interaction:getElementInfo', selector),
+    setValue: (selector, value) => ipcRenderer.invoke('interaction:setValue', selector, value),
+    selectOption: (selector, value) => ipcRenderer.invoke('interaction:selectOption', selector, value),
+    getAttribute: (selector, attribute) => ipcRenderer.invoke('interaction:getAttribute', selector, attribute),
+    waitForElement: (selector, timeout) => ipcRenderer.invoke('interaction:waitForElement', selector, timeout),
+    evaluate: (expression) => ipcRenderer.invoke('interaction:evaluate', expression),
+    onElementSelected: (callback) => {
+      const handler = (event, data) => callback(data);
+      ipcRenderer.on('interaction:elementSelected', handler);
+      return () => ipcRenderer.removeListener('interaction:elementSelected', handler);
+    },
+    onPickerCancelled: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on('interaction:pickerCancelled', handler);
+      return () => ipcRenderer.removeListener('interaction:pickerCancelled', handler);
+    }
+  },
+
   // Event Subscriptions
   onNetworkEvent: (callback) => {
     const handler = (event, data) => callback(data);
