@@ -117,6 +117,20 @@ async function attachCDP(webContents) {
     });
 
     try {
+      const cleanUA = (webContents.getUserAgent() || '')
+        .replace(/Electron\/[0-9.]+\s*/gi, '')
+        .replace(/auto_browser\/[0-9.]+\s*/gi, '')
+        .trim();
+      if (cleanUA) {
+        await webContents.debugger.sendCommand('Network.setUserAgentOverride', {
+          userAgent: cleanUA
+        });
+      }
+    } catch (e) {
+      console.warn('Network.setUserAgentOverride notice:', e.message);
+    }
+
+    try {
       await webContents.debugger.sendCommand('DOM.enable');
       await webContents.debugger.sendCommand('Runtime.enable');
     } catch (e) {
@@ -175,6 +189,26 @@ function createMainWindow() {
   mainWindow.contentView.addChildView(browserView);
 
   const bwc = browserView.webContents;
+
+  // Spoof clean standard Chrome User-Agent (stripping Electron and auto_browser signatures)
+  // Ensures compatibility with WhatsApp Web, Google OAuth, and modern web applications
+  const defaultUA = bwc.getUserAgent();
+  const cleanUA = defaultUA
+    .replace(/Electron\/[0-9.]+\s*/gi, '')
+    .replace(/auto_browser\/[0-9.]+\s*/gi, '')
+    .trim();
+  bwc.setUserAgent(cleanUA);
+  app.userAgentFallback = cleanUA;
+
+  // Auto-grant permissions (notifications, media, clipboard) for the embedded browser view
+  if (bwc.session) {
+    bwc.session.setPermissionRequestHandler((webContents, permission, callback) => {
+      callback(true);
+    });
+    bwc.session.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+      return true;
+    });
+  }
 
   // Track browser events
   bwc.on('did-start-navigation', (e, url) => {
@@ -704,6 +738,12 @@ if (!gotTheLock) {
     startLocalAutomationServer();
   });
 }
+
+app.on('before-quit', () => {
+  if (recorder && recorder.activeSession) {
+    recorder.stopSession();
+  }
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
