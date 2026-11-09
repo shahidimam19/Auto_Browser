@@ -2,6 +2,17 @@ const fs = require('fs');
 const path = require('path');
 const runAnalysis = require('../templates/analyse');
 
+function getLocalTimestampString(d = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const year = d.getFullYear();
+  const month = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  const hours = pad(d.getHours());
+  const minutes = pad(d.getMinutes());
+  const seconds = pad(d.getSeconds());
+  return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
+}
+
 class NetworkRecorder {
   constructor(baseDir, settings = {}) {
     this.baseDir = baseDir;
@@ -36,7 +47,7 @@ class NetworkRecorder {
   }
 
   startSession(customName = null) {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+    const timestamp = getLocalTimestampString();
     const sessionId = customName ? customName.replace(/[^a-zA-Z0-9_-]/g, '_') : `session_${timestamp}`;
     const sessionPath = path.join(this.recordingsDir, sessionId);
     const bodiesPath = path.join(sessionPath, 'bodies');
