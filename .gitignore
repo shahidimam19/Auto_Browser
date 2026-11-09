@@ -17,3 +17,7 @@ Thumbs.db
 # Session recordings: keep recordings folder, ignore session data
 recordings/*
 !recordings/.gitkeep
+
+# Tasks: keep tasks folder, ignore task session data
+tasks/*
+!tasks/.gitkeep
