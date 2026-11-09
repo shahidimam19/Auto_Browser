@@ -1,9 +1,19 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, shell, dialog, Menu, screen } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, shell, dialog, Menu, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const NetworkRecorder = require('./recorder');
 const InteractionManager = require('./interaction');
+
+// Chromium flags to strip automation detection and disguise as standard Google Chrome
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+app.commandLine.appendSwitch('disable-features', 'IsolateOrigins,site-per-process');
+
+const CHROME_VERSION = '131.0.6778.205';
+const CHROME_MAJOR = '131';
+const STANDARD_CHROME_UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION} Safari/537.36`;
+
+app.userAgentFallback = STANDARD_CHROME_UA;
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 
@@ -163,17 +173,62 @@ async function attachCDP(webContents) {
     });
 
     try {
-      const cleanUA = (webContents.getUserAgent() || '')
-        .replace(/Electron\/[0-9.]+\s*/gi, '')
-        .replace(/auto_browser\/[0-9.]+\s*/gi, '')
-        .trim();
-      if (cleanUA) {
-        await webContents.debugger.sendCommand('Network.setUserAgentOverride', {
-          userAgent: cleanUA
-        });
-      }
+      await webContents.debugger.sendCommand('Network.setUserAgentOverride', {
+        userAgent: STANDARD_CHROME_UA,
+        acceptLanguage: 'en-US,en;q=0.9',
+        platform: 'Win32',
+        userAgentMetadata: {
+          brands: [
+            { brand: 'Google Chrome', version: CHROME_MAJOR },
+            { brand: 'Chromium', version: CHROME_MAJOR },
+            { brand: 'Not_A Brand', version: '24' }
+          ],
+          fullVersionList: [
+            { brand: 'Google Chrome', version: CHROME_VERSION },
+            { brand: 'Chromium', version: CHROME_VERSION },
+            { brand: 'Not_A Brand', version: '24.0.0.0' }
+          ],
+          fullVersion: CHROME_VERSION,
+          platform: 'Windows',
+          platformVersion: '10.0.0',
+          architecture: 'x86',
+          model: '',
+          mobile: false,
+          bitness: '64',
+          wow64: false
+        }
+      });
     } catch (e) {
       console.warn('Network.setUserAgentOverride notice:', e.message);
+    }
+
+    try {
+      await webContents.debugger.sendCommand('Page.enable');
+      await webContents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
+        source: `
+          try {
+            Object.defineProperty(navigator, 'webdriver', {
+              get: () => undefined,
+              configurable: true
+            });
+            if (!window.chrome) {
+              window.chrome = {};
+            }
+            if (!window.chrome.runtime) {
+              window.chrome.runtime = {
+                OnInstalledReason: { CHROME_UPDATE: "chrome_update", INSTALL: "install", SHARED_MODULE_UPDATE: "shared_module_update", UPDATE: "update" },
+                OnRestartRequiredReason: { APP_UPDATE: "app_update", OS_UPDATE: "os_update", PERIODIC: "periodic" },
+                PlatformArch: { ARM: "arm", ARM64: "arm64", MIPS: "mips", MIPS64: "mips64", X86_32: "x86-32", X86_64: "x86-64" },
+                PlatformNaclArch: { ARM: "arm", MIPS: "mips", MIPS64: "mips64", X86_32: "x86-32", X86_64: "x86-64" },
+                PlatformOs: { ANDROID: "android", CROS: "cros", LINUX: "linux", MAC: "mac", OPENBSD: "openbsd", WIN: "win" },
+                RequestUpdateCheckStatus: { NO_UPDATE: "no_update", THROTTLED: "throttled", UPDATE_AVAILABLE: "update_available" }
+              };
+            }
+          } catch (e) {}
+        `
+      });
+    } catch (e) {
+      console.warn('Page.addScriptToEvaluateOnNewDocument notice:', e.message);
     }
 
     try {
@@ -195,6 +250,7 @@ function createTab(initialUrl = 'auto://home') {
   const tabId = 'tab_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
   const view = new WebContentsView({
     webPreferences: {
+      preload: path.join(__dirname, 'stealth_preload.js'),
       contextIsolation: true,
       sandbox: true,
       javascript: true
@@ -206,13 +262,7 @@ function createTab(initialUrl = 'auto://home') {
   const bwc = view.webContents;
 
   // Spoof clean standard Chrome User-Agent
-  const defaultUA = bwc.getUserAgent();
-  const cleanUA = defaultUA
-    .replace(/Electron\/[0-9.]+\s*/gi, '')
-    .replace(/auto_browser\/[0-9.]+\s*/gi, '')
-    .trim();
-  bwc.setUserAgent(cleanUA);
-  app.userAgentFallback = cleanUA;
+  bwc.setUserAgent(STANDARD_CHROME_UA);
 
   // Auto-grant permissions
   if (bwc.session) {
@@ -438,6 +488,16 @@ function createMainWindow() {
     recorder.startSession();
   }
 
+  // Inject Google Chrome Client Hints & clean headers across all requests
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const requestHeaders = Object.assign({}, details.requestHeaders);
+    requestHeaders['User-Agent'] = STANDARD_CHROME_UA;
+    requestHeaders['sec-ch-ua'] = `"Google Chrome";v="${CHROME_MAJOR}", "Chromium";v="${CHROME_MAJOR}", "Not_A Brand";v="24"`;
+    requestHeaders['sec-ch-ua-mobile'] = '?0';
+    requestHeaders['sec-ch-ua-platform'] = '"Windows"';
+    callback({ cancel: false, requestHeaders });
+  });
+
   // Create initial tab
   createTab(settings.homeUrl || 'auto://home');
 
@@ -588,6 +648,15 @@ ipcMain.handle('browser:openDevTools', () => {
   if (activeTab) {
     activeTab.view.webContents.openDevTools({ mode: 'detach' });
   }
+});
+
+ipcMain.handle('browser:openExternal', (event, url) => {
+  const target = url || (getActiveTab() ? getActiveTab().url : null);
+  if (target && /^https?:\/\//i.test(target)) {
+    shell.openExternal(target);
+    return true;
+  }
+  return false;
 });
 
 // Recorder IPC Handlers
@@ -760,6 +829,11 @@ ipcMain.handle('interaction:waitForElement', async (event, selector, timeout) =>
   return { success: false, error: 'Interaction manager not available' };
 });
 
+ipcMain.handle('interaction:uploadFile', async (event, target) => {
+  if (interactionManager) return await interactionManager.uploadFile(target);
+  return { success: false, error: 'Interaction manager not available' };
+});
+
 ipcMain.handle('interaction:evaluate', async (event, expression) => {
   if (interactionManager) return await interactionManager.evaluate(expression);
   return { success: false, error: 'Interaction manager not available' };
@@ -781,6 +855,15 @@ ipcMain.handle('app:showMenu', (event, { x, y, isInspectorVisible, isRecording, 
       accelerator: 'Ctrl+W',
       click: () => {
         if (activeTabId) closeTab(activeTabId);
+      }
+    },
+    {
+      label: '🌐 Open in External Browser',
+      click: () => {
+        const activeTab = getActiveTab();
+        if (activeTab && activeTab.url && /^https?:\/\//i.test(activeTab.url)) {
+          shell.openExternal(activeTab.url);
+        }
       }
     },
     { type: 'separator' },
@@ -986,6 +1069,13 @@ function startLocalAutomationServer() {
         case '/selectOption': {
           if (!data.selector || data.value === undefined) return jsonResponse(res, 400, { error: 'Missing selector or value' });
           const result = await interactionManager.selectOption(data.selector, data.value);
+          return jsonResponse(res, result.success ? 200 : 400, result);
+        }
+
+        case '/upload':
+        case '/uploadFile': {
+          if (!data.selector) return jsonResponse(res, 400, { error: 'Missing selector parameter' });
+          const result = await interactionManager.uploadFile(data);
           return jsonResponse(res, result.success ? 200 : 400, result);
         }
 

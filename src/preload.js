@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('api', {
   stopNavigation: () => ipcRenderer.invoke('browser:stop'),
   updateBounds: (bounds) => ipcRenderer.invoke('browser:updateBounds', bounds),
   openDevTools: () => ipcRenderer.invoke('browser:openDevTools'),
+  openExternal: (url) => ipcRenderer.invoke('browser:openExternal', url),
   executeScript: (script) => ipcRenderer.invoke('browser:executeScript', script),
 
   // Recorder Controls
@@ -74,6 +75,7 @@ contextBridge.exposeInMainWorld('api', {
     selectOption: (selector, value) => ipcRenderer.invoke('interaction:selectOption', selector, value),
     getAttribute: (selector, attribute) => ipcRenderer.invoke('interaction:getAttribute', selector, attribute),
     waitForElement: (selector, timeout) => ipcRenderer.invoke('interaction:waitForElement', selector, timeout),
+    uploadFile: (target) => ipcRenderer.invoke('interaction:uploadFile', target),
     evaluate: (expression) => ipcRenderer.invoke('interaction:evaluate', expression),
     onElementSelected: (callback) => {
       const handler = (event, data) => callback(data);

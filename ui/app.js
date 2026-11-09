@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const sslBadge = document.getElementById('ssl-badge');
   const loadingSpinner = document.getElementById('loading-spinner');
   const btnDevtools = document.getElementById('btn-devtools');
+  const btnOpenExternal = document.getElementById('btn-open-external');
 
   // Layout Controls
   const workspace = document.getElementById('workspace');
@@ -445,6 +446,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   btnDevtools.addEventListener('click', () => window.api.openDevTools());
+  btnOpenExternal?.addEventListener('click', () => {
+    if (window.api && window.api.openExternal) {
+      window.api.openExternal();
+    }
+  });
 
   // Listen to browser state updates from main process
   window.api.onBrowserState((state) => {

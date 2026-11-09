@@ -471,6 +471,36 @@ class InteractionManager {
     }
   }
 
+  async uploadFile(target) {
+    try {
+      const selector = typeof target === 'string' ? target : target.selector;
+      const filePaths = target.files || (target.file ? [target.file] : (target.filePath ? [target.filePath] : []));
+      if (!selector || filePaths.length === 0) {
+        return { success: false, error: 'Provide selector and files/file/filePath' };
+      }
+
+      await this._sendCDP('DOM.enable');
+      const doc = await this._sendCDP('DOM.getDocument');
+      const { nodeId } = await this._sendCDP('DOM.querySelector', {
+        nodeId: doc.root.nodeId,
+        selector: selector
+      });
+
+      if (!nodeId) {
+        return { success: false, error: `File input element not found for selector: ${selector}` };
+      }
+
+      await this._sendCDP('DOM.setFileInputFiles', {
+        files: filePaths,
+        nodeId: nodeId
+      });
+
+      return { success: true, selector, files: filePaths };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   // ── Picker Methods ───────────────────────────────────────────────────
 
   async startPicker() {
