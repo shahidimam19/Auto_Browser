@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs');
-const NetworkRecorder = require('./recorder');
+const NetworkRecorder = require('./src/recorder');
 
 console.log('Running NetworkRecorder verification test...');
 

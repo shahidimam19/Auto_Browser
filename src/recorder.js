@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const runAnalysis = require('./templates/analyse');
+const runAnalysis = require('../templates/analyse');
 
 class NetworkRecorder {
   constructor(baseDir, settings = {}) {

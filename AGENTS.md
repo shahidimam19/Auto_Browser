@@ -1,7 +1,7 @@
 # Auto_Browser Agent Guidelines & Workspace Rules
 
 ## 1. Strict Separation Between Browser Core Code and Session Data
-- **Core Browser Code**: Keep root directory and core app modules (`main.js`, `recorder.js`, `preload.js`, `settings.json`, `smoke_test.js`, `templates/`, `ui/`) strictly for the Auto_Browser Electron application.
+- **Core Browser Code**: Keep root directory and core app modules (`src/` containing `main.js`, `recorder.js`, `preload.js`, `interaction.js`, plus `settings.json`, `smoke_test.js`, `templates/`, `ui/`) strictly for the Auto_Browser Electron application.
 - **NEVER** write session-specific scraping scripts, HTML dumps, CSV exports, Excel spreadsheets, or analysis code in the project root.
 
 ## 2. Session Isolation Rule

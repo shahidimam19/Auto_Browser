@@ -5,12 +5,14 @@ const http = require('http');
 const NetworkRecorder = require('./recorder');
 const InteractionManager = require('./interaction');
 
+const ROOT_DIR = path.resolve(__dirname, '..');
+
 let mainWindow = null;
 let browserView = null;
 let recorder = null;
 let interactionManager = null;
 let settings = {};
-const settingsPath = path.join(__dirname, 'settings.json');
+const settingsPath = path.join(ROOT_DIR, 'settings.json');
 
 function loadSettings() {
   try {
@@ -157,7 +159,7 @@ function broadcastBrowserState() {
 
 function createMainWindow() {
   loadSettings();
-  recorder = new NetworkRecorder(__dirname, settings);
+  recorder = new NetworkRecorder(ROOT_DIR, settings);
 
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -234,7 +236,7 @@ function createMainWindow() {
   attachCDP(bwc);
 
   // Initialize interaction manager for button controls & element picker
-  interactionManager = new InteractionManager(bwc, __dirname);
+  interactionManager = new InteractionManager(bwc, ROOT_DIR);
 
   // Intercept element picker events from browserView
   bwc.on('console-message', (e, level, message) => {
@@ -272,7 +274,7 @@ function createMainWindow() {
   }
 
   // Load UI into mainWindow
-  mainWindow.loadFile(path.join(__dirname, 'ui', 'index.html'));
+  mainWindow.loadFile(path.join(ROOT_DIR, 'ui', 'index.html'));
 
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('UI finished load successfully');
@@ -434,7 +436,7 @@ ipcMain.handle('recorder:loadSession', (event, sessionId) => {
 });
 
 ipcMain.handle('recorder:openSessionFolder', (event, sessionId) => {
-  const sessionDir = sessionId ? path.join(__dirname, 'recordings', sessionId) : path.join(__dirname, 'recordings');
+  const sessionDir = sessionId ? path.join(ROOT_DIR, 'recordings', sessionId) : path.join(ROOT_DIR, 'recordings');
   if (fs.existsSync(sessionDir)) {
     shell.openPath(sessionDir);
     return true;
@@ -457,7 +459,7 @@ ipcMain.handle('recorder:exportHAR', (event, sessionId) => {
   const har = recorder.exportHAR(sessionId);
   if (!har) return null;
 
-  const defaultPath = path.join(__dirname, 'recordings', `${sessionId || 'session'}.har`);
+  const defaultPath = path.join(ROOT_DIR, 'recordings', `${sessionId || 'session'}.har`);
   const chosenPath = dialog.showSaveDialogSync(mainWindow, {
     title: 'Export HTTP Archive (HAR)',
     defaultPath: defaultPath,
