@@ -1,5 +1,10 @@
 // Auto_Browser Application Logic
 document.addEventListener('DOMContentLoaded', async () => {
+  // Elements: Multi-Tab Strip
+  const tabList = document.getElementById('tab-list');
+  const btnNewTab = document.getElementById('btn-new-tab');
+  let currentActiveTabId = null;
+
   // Elements: Navigation
   const btnBack = document.getElementById('btn-back');
   const btnForward = document.getElementById('btn-forward');
@@ -82,8 +87,134 @@ document.addEventListener('DOMContentLoaded', async () => {
   const authTokensList = document.getElementById('auth-tokens-list');
   const tokenStatusBadge = document.getElementById('token-status-badge');
 
+  // Chrome 3-Dots Menu Elements
+  const btnChromeMenu = document.getElementById('btn-chrome-menu');
+  const chromeDropdownMenu = document.getElementById('chrome-dropdown-menu');
+  const menuToggleInspector = document.getElementById('menu-toggle-inspector');
+  const menuInspectorBadge = document.getElementById('menu-inspector-badge');
+
+  function toggleChromeMenu() {
+    if (!chromeDropdownMenu) return;
+    const isHidden = chromeDropdownMenu.classList.contains('hidden');
+    if (isHidden) {
+      chromeDropdownMenu.classList.remove('hidden');
+      btnChromeMenu?.classList.add('active');
+    } else {
+      closeChromeMenu();
+    }
+  }
+
+  function closeChromeMenu() {
+    if (!chromeDropdownMenu) return;
+    chromeDropdownMenu.classList.add('hidden');
+    btnChromeMenu?.classList.remove('active');
+  }
+
+  if (btnChromeMenu) {
+    btnChromeMenu.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (window.api && typeof window.api.showMenu === 'function') {
+        const rect = btnChromeMenu.getBoundingClientRect();
+        window.api.showMenu({
+          x: rect.left,
+          y: rect.bottom + 2,
+          isInspectorVisible: currentLayout !== 'browser',
+          isRecording: recorderStatus === 'recording' || recorderStatus === 'paused',
+          isPaused: recorderStatus === 'paused'
+        });
+      } else {
+        toggleChromeMenu();
+      }
+    });
+  }
+
+  // Handle native menu actions dispatched from Electron main process
+  if (window.api && typeof window.api.onMenuAction === 'function') {
+    window.api.onMenuAction((action) => {
+      switch (action) {
+        case 'toggleInspector':
+          setLayout(currentLayout === 'browser' ? 'split-h' : 'browser');
+          break;
+        case 'pickElement':
+          btnPickElement?.click();
+          break;
+        case 'toggleControls':
+          btnToggleInteraction?.click();
+          break;
+        case 'openDevTools':
+          window.api.openDevTools();
+          break;
+        case 'togglePause':
+          btnPauseToggle?.click();
+          break;
+        case 'newSession':
+          btnSaveSession?.click();
+          break;
+        case 'openSessions':
+          btnSessionsDrawer?.click();
+          break;
+        case 'exportHar':
+          btnExportHar?.click();
+          break;
+        case 'clearLog':
+          btnClear?.click();
+          break;
+        case 'openSettings':
+          btnSettings?.click();
+          break;
+      }
+    });
+  }
+
+  document.addEventListener('click', (e) => {
+    if (chromeDropdownMenu && !chromeDropdownMenu.contains(e.target) && e.target !== btnChromeMenu) {
+      closeChromeMenu();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeChromeMenu();
+    }
+    // Ctrl+T: New Tab
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 't') {
+      e.preventDefault();
+      if (window.api && window.api.createTab) {
+        window.api.createTab('auto://home');
+      }
+    }
+    // Ctrl+W: Close Current Tab
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
+      if (!isAnyModalOpen()) {
+        e.preventDefault();
+        if (currentActiveTabId && window.api && window.api.closeTab) {
+          window.api.closeTab(currentActiveTabId);
+        }
+      }
+    }
+  });
+
+  if (menuToggleInspector) {
+    menuToggleInspector.addEventListener('click', () => {
+      if (currentLayout === 'browser') {
+        setLayout('split-h');
+      } else {
+        setLayout('browser');
+      }
+      closeChromeMenu();
+    });
+  }
+
+  chromeDropdownMenu?.querySelectorAll('.menu-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      closeChromeMenu();
+    });
+  });
+
   // State
-  let currentLayout = 'split-h'; // 'split-h' | 'split-v' | 'browser' | 'inspector'
+  let currentLayout = 'browser'; // Start in clean full-screen browser mode by default
   let splitRatio = 0.5; // percentage
   let isDraggingSplitter = false;
   let recorderStatus = 'idle'; // 'idle' | 'recording' | 'paused'
@@ -96,7 +227,90 @@ document.addEventListener('DOMContentLoaded', async () => {
   const records = new Map(); // requestId -> record
 
   // Initialize workspace layout
-  workspace.className = 'layout-split-h';
+  workspace.className = 'layout-browser';
+
+  // =========================================================================
+  // Multi-Tab Strip Management
+  // =========================================================================
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function renderTabs(data) {
+    if (!tabList || !data || !Array.isArray(data.tabs)) return;
+    currentActiveTabId = data.activeTabId || null;
+    tabList.innerHTML = '';
+
+    data.tabs.forEach((tab) => {
+      const tabEl = document.createElement('div');
+      tabEl.className = `tab-item ${tab.isActive ? 'active' : ''}`;
+      tabEl.dataset.tabId = tab.id;
+
+      const iconHtml = tab.isLoading
+        ? '<div class="tab-spinner"></div>'
+        : '<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
+
+      const displayTitle = tab.title || (tab.url === 'auto://home' ? 'Home' : tab.url) || 'New Tab';
+
+      tabEl.innerHTML = `
+        <span class="tab-favicon">${iconHtml}</span>
+        <span class="tab-title" title="${escapeHtml(displayTitle)}">${escapeHtml(displayTitle)}</span>
+        <button class="tab-close-btn" title="Close Tab (Ctrl+W)">&times;</button>
+      `;
+
+      tabEl.addEventListener('click', (e) => {
+        if (e.target.closest('.tab-close-btn')) return;
+        if (window.api && window.api.switchTab) {
+          window.api.switchTab(tab.id);
+        }
+      });
+
+      const closeBtn = tabEl.querySelector('.tab-close-btn');
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.api && window.api.closeTab) {
+          window.api.closeTab(tab.id);
+        }
+      });
+
+      tabList.appendChild(tabEl);
+    });
+  }
+
+  if (btnNewTab) {
+    btnNewTab.addEventListener('click', () => {
+      if (window.api && window.api.createTab) {
+        window.api.createTab('auto://home');
+      }
+    });
+  }
+
+  const tabStripBar = document.getElementById('tab-strip-bar');
+  if (tabStripBar) {
+    tabStripBar.addEventListener('dblclick', (e) => {
+      if (e.target === tabStripBar || e.target === tabList) {
+        if (window.api && window.api.createTab) {
+          window.api.createTab('auto://home');
+        }
+      }
+    });
+  }
+
+  if (window.api && window.api.onTabsUpdated) {
+    window.api.onTabsUpdated((data) => {
+      renderTabs(data);
+    });
+  }
+
+  if (window.api && window.api.tabs && window.api.tabs.getAll) {
+    window.api.tabs.getAll().then(renderTabs);
+  }
 
   // =========================================================================
   // Bounds Synchronization with WebContentsView
@@ -142,10 +356,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentLayout = mode;
     workspace.className = `layout-${mode}`;
 
-    btnLayoutSplitH.classList.toggle('active', mode === 'split-h');
-    btnLayoutSplitV.classList.toggle('active', mode === 'split-v');
-    btnLayoutBrowser.classList.toggle('active', mode === 'browser');
-    btnLayoutInspector.classList.toggle('active', mode === 'inspector');
+    btnLayoutSplitH?.classList.toggle('active', mode === 'split-h');
+    btnLayoutSplitV?.classList.toggle('active', mode === 'split-v');
+    btnLayoutBrowser?.classList.toggle('active', mode === 'browser');
+    btnLayoutInspector?.classList.toggle('active', mode === 'inspector');
 
     if (mode === 'split-h') {
       browserMount.style.height = `${splitRatio * 100}%`;
@@ -153,15 +367,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (mode === 'split-v') {
       browserMount.style.width = `${splitRatio * 100}%`;
       browserMount.style.height = '100%';
+    } else if (mode === 'browser') {
+      browserMount.style.width = '100%';
+      browserMount.style.height = '100%';
+    }
+
+    if (menuInspectorBadge) {
+      menuInspectorBadge.textContent = mode === 'browser' ? 'Off' : 'On';
     }
 
     setTimeout(syncBrowserBounds, 50);
   }
 
-  btnLayoutSplitH.addEventListener('click', () => setLayout('split-h'));
-  btnLayoutSplitV.addEventListener('click', () => setLayout('split-v'));
-  btnLayoutBrowser.addEventListener('click', () => setLayout('browser'));
-  btnLayoutInspector.addEventListener('click', () => setLayout('inspector'));
+  btnLayoutSplitH?.addEventListener('click', () => setLayout('split-h'));
+  btnLayoutSplitV?.addEventListener('click', () => setLayout('split-v'));
+  btnLayoutBrowser?.addEventListener('click', () => setLayout('browser'));
+  btnLayoutInspector?.addEventListener('click', () => setLayout('inspector'));
 
   // Splitter Dragging
   splitter.addEventListener('mousedown', (e) => {
@@ -217,20 +438,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   btnReload.addEventListener('click', () => window.api.reload());
   btnHome.addEventListener('click', async () => {
     const settings = await window.api.getSettings();
-    window.api.navigate(settings.homeUrl || 'https://httpbin.org');
+    if (!settings.homeUrl || settings.homeUrl === 'https://httpbin.org' || settings.homeUrl === 'auto://home') {
+      window.api.navigate('auto://home');
+    } else {
+      window.api.navigate(settings.homeUrl);
+    }
   });
   btnDevtools.addEventListener('click', () => window.api.openDevTools());
 
   // Listen to browser state updates from main process
   window.api.onBrowserState((state) => {
+    const isHome = state.url && (state.url.includes('home.html') || state.url === 'auto://home');
     if (document.activeElement !== urlInput) {
-      urlInput.value = state.url || '';
+      urlInput.value = isHome ? 'auto://home' : (state.url || '');
     }
     btnBack.disabled = !state.canGoBack;
     btnForward.disabled = !state.canGoForward;
     loadingSpinner.classList.toggle('hidden', !state.isLoading);
 
-    if (state.url && state.url.startsWith('https://')) {
+    if (isHome) {
+      sslBadge.className = 'ssl-indicator secure';
+      sslBadge.title = 'Auto_Browser Internal Home';
+    } else if (state.url && state.url.startsWith('https://')) {
       sslBadge.className = 'ssl-indicator secure';
       sslBadge.title = 'Secure HTTPS Connection';
     } else {
@@ -246,7 +475,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const h = String(Math.floor(timerSeconds / 3600)).padStart(2, '0');
     const m = String(Math.floor((timerSeconds % 3600) / 60)).padStart(2, '0');
     const s = String(timerSeconds % 60).padStart(2, '0');
-    recordingTimerElem.textContent = `${h}:${m}:${s}`;
+    const formatted = `${h}:${m}:${s}`;
+    if (recordingTimerElem) recordingTimerElem.textContent = formatted;
+    if (recorderStatus === 'recording' && recBtnText) {
+      recBtnText.textContent = `Stop (${m}:${s})`;
+    }
   }
 
   function startTimer() {
@@ -264,28 +497,28 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (session) {
       activeSessionId = session.id;
-      activeSessionIdElem.textContent = session.id;
+      if (activeSessionIdElem) activeSessionIdElem.textContent = session.id;
     } else if (status === 'idle') {
       activeSessionId = null;
-      activeSessionIdElem.textContent = 'None';
+      if (activeSessionIdElem) activeSessionIdElem.textContent = 'None';
     }
 
     if (status === 'recording') {
-      btnRecordToggle.className = 'rec-btn recording';
-      recBtnText.textContent = 'Stop Recording';
-      btnPauseToggle.disabled = false;
-      pauseBtnText.textContent = 'Pause';
+      btnRecordToggle.className = 'rec-btn-compact recording';
+      recBtnText.textContent = 'Stop';
+      if (btnPauseToggle) btnPauseToggle.disabled = false;
+      if (pauseBtnText) pauseBtnText.textContent = 'Pause Recording';
       startTimer();
     } else if (status === 'paused') {
-      btnRecordToggle.className = 'rec-btn recording';
-      recBtnText.textContent = 'Stop Recording';
-      btnPauseToggle.disabled = false;
-      pauseBtnText.textContent = 'Resume';
+      btnRecordToggle.className = 'rec-btn-compact recording';
+      recBtnText.textContent = 'Paused';
+      if (btnPauseToggle) btnPauseToggle.disabled = false;
+      if (pauseBtnText) pauseBtnText.textContent = 'Resume Recording';
     } else {
-      btnRecordToggle.className = 'rec-btn idle';
-      recBtnText.textContent = 'Start Recording';
-      btnPauseToggle.disabled = true;
-      pauseBtnText.textContent = 'Pause';
+      btnRecordToggle.className = 'rec-btn-compact idle';
+      recBtnText.textContent = 'Record';
+      if (btnPauseToggle) btnPauseToggle.disabled = true;
+      if (pauseBtnText) pauseBtnText.textContent = 'Pause Recording';
       if (timerInterval) clearInterval(timerInterval);
     }
   }
@@ -1097,7 +1330,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     settingMaxBodySize.value = Math.round((s.maxBodySizeBytes || 5242880) / (1024 * 1024));
     settingRedactEnabled.checked = !!s.redactEnabled;
     settingRedactHeaders.value = (s.redactHeaders || []).join(', ');
-    settingHomeUrl.value = s.homeUrl || 'https://httpbin.org';
+    settingHomeUrl.value = s.homeUrl || 'auto://home';
     modalSettings.classList.remove('hidden');
     syncBrowserBounds();
   });

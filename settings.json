@@ -4,7 +4,7 @@
   "maxBodySizeBytes": 5242880,
   "redactEnabled": false,
   "redactHeaders": [],
-  "homeUrl": "https://httpbin.org",
+  "homeUrl": "auto://home",
   "storageDir": "recordings",
   "theme": "dark"
 }

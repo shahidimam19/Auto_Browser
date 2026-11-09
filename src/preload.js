@@ -1,6 +1,27 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  // Tab Management
+  tabs: {
+    create: (url) => ipcRenderer.invoke('tabs:create', url),
+    switch: (tabId) => ipcRenderer.invoke('tabs:switch', tabId),
+    close: (tabId) => ipcRenderer.invoke('tabs:close', tabId),
+    getAll: () => ipcRenderer.invoke('tabs:getAll'),
+    onUpdated: (callback) => {
+      const handler = (event, data) => callback(data);
+      ipcRenderer.on('tabs:updated', handler);
+      return () => ipcRenderer.removeListener('tabs:updated', handler);
+    }
+  },
+  createTab: (url) => ipcRenderer.invoke('tabs:create', url),
+  switchTab: (tabId) => ipcRenderer.invoke('tabs:switch', tabId),
+  closeTab: (tabId) => ipcRenderer.invoke('tabs:close', tabId),
+  onTabsUpdated: (callback) => {
+    const handler = (event, data) => callback(data);
+    ipcRenderer.on('tabs:updated', handler);
+    return () => ipcRenderer.removeListener('tabs:updated', handler);
+  },
+
   // Browser Controls & Layout
   navigate: (url) => ipcRenderer.invoke('browser:navigate', url),
   goBack: () => ipcRenderer.invoke('browser:goBack'),
@@ -28,6 +49,14 @@ contextBridge.exposeInMainWorld('api', {
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+
+  // Chrome 3-Dots App Menu
+  showMenu: (options) => ipcRenderer.invoke('app:showMenu', options),
+  onMenuAction: (callback) => {
+    const handler = (event, action) => callback(action);
+    ipcRenderer.on('menu:action', handler);
+    return () => ipcRenderer.removeListener('menu:action', handler);
+  },
 
   // Element Interaction & Button Controls
   interaction: {

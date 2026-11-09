@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, shell, dialog, Menu } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, shell, dialog, Menu, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -8,7 +8,9 @@ const InteractionManager = require('./interaction');
 const ROOT_DIR = path.resolve(__dirname, '..');
 
 let mainWindow = null;
-let browserView = null;
+const tabs = new Map(); // tabId -> { id, view, title, url, isLoading, canGoBack, canGoForward }
+let activeTabId = null;
+let currentBrowserBounds = { x: 0, y: 0, width: 0, height: 0, hidden: false };
 let recorder = null;
 let interactionManager = null;
 let settings = {};
@@ -27,7 +29,7 @@ function loadSettings() {
       maxBodySizeBytes: 5242880,
       redactEnabled: false,
       redactHeaders: [],
-      homeUrl: 'https://httpbin.org',
+      homeUrl: 'auto://home',
       storageDir: 'recordings'
     };
   }
@@ -49,6 +51,48 @@ function sendToUI(channel, data) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, data);
   }
+}
+
+function getActiveTab() {
+  if (activeTabId && tabs.has(activeTabId)) {
+    return tabs.get(activeTabId);
+  }
+  if (tabs.size > 0) {
+    return tabs.values().next().value;
+  }
+  return null;
+}
+
+function getTabsSummary() {
+  const list = [];
+  for (const [id, tab] of tabs.entries()) {
+    list.push({
+      id: tab.id,
+      title: tab.title || (tab.url === 'auto://home' ? 'Home' : tab.url) || 'New Tab',
+      url: tab.url || '',
+      isLoading: !!tab.isLoading,
+      isActive: id === activeTabId
+    });
+  }
+  return { tabs: list, activeTabId };
+}
+
+function broadcastTabs() {
+  sendToUI('tabs:updated', getTabsSummary());
+}
+
+function broadcastBrowserState() {
+  const activeTab = getActiveTab();
+  if (!activeTab || !mainWindow || activeTab.view.webContents.isDestroyed()) return;
+  const wc = activeTab.view.webContents;
+  sendToUI('browser:state', {
+    tabId: activeTab.id,
+    url: activeTab.url || wc.getURL(),
+    title: activeTab.title || wc.getTitle(),
+    isLoading: !!activeTab.isLoading,
+    canGoBack: wc.navigationHistory ? wc.navigationHistory.canGoBack() : (wc.canGoBack ? wc.canGoBack() : false),
+    canGoForward: wc.navigationHistory ? wc.navigationHistory.canGoForward() : (wc.canGoForward ? wc.canGoForward() : false)
+  });
 }
 
 async function attachCDP(webContents) {
@@ -145,42 +189,11 @@ async function attachCDP(webContents) {
   }
 }
 
-function broadcastBrowserState() {
-  if (!browserView || !mainWindow || browserView.webContents.isDestroyed()) return;
-  const wc = browserView.webContents;
-  sendToUI('browser:state', {
-    url: wc.getURL(),
-    title: wc.getTitle(),
-    isLoading: wc.isLoading(),
-    canGoBack: wc.navigationHistory ? wc.navigationHistory.canGoBack() : (wc.canGoBack ? wc.canGoBack() : false),
-    canGoForward: wc.navigationHistory ? wc.navigationHistory.canGoForward() : (wc.canGoForward ? wc.canGoForward() : false)
-  });
-}
+function createTab(initialUrl = 'auto://home') {
+  if (!mainWindow) return null;
 
-function createMainWindow() {
-  loadSettings();
-  recorder = new NetworkRecorder(ROOT_DIR, settings);
-
-  mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 920,
-    minWidth: 1020,
-    minHeight: 650,
-    title: 'Auto_Browser - Custom Chromium Browser & Network Recorder',
-    backgroundColor: '#0d1117',
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  });
-
-  Menu.setApplicationMenu(null);
-  mainWindow.setMenu(null);
-
-  // Create embedded Chromium Browser view
-  browserView = new WebContentsView({
+  const tabId = 'tab_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+  const view = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
@@ -188,12 +201,11 @@ function createMainWindow() {
     }
   });
 
-  mainWindow.contentView.addChildView(browserView);
+  mainWindow.contentView.addChildView(view);
 
-  const bwc = browserView.webContents;
+  const bwc = view.webContents;
 
-  // Spoof clean standard Chrome User-Agent (stripping Electron and auto_browser signatures)
-  // Ensures compatibility with WhatsApp Web, Google OAuth, and modern web applications
+  // Spoof clean standard Chrome User-Agent
   const defaultUA = bwc.getUserAgent();
   const cleanUA = defaultUA
     .replace(/Electron\/[0-9.]+\s*/gi, '')
@@ -202,43 +214,68 @@ function createMainWindow() {
   bwc.setUserAgent(cleanUA);
   app.userAgentFallback = cleanUA;
 
-  // Auto-grant permissions (notifications, media, clipboard) for the embedded browser view
+  // Auto-grant permissions
   if (bwc.session) {
     bwc.session.setPermissionRequestHandler((webContents, permission, callback) => {
       callback(true);
     });
-    bwc.session.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-      return true;
-    });
+    bwc.session.setPermissionCheckHandler(() => true);
   }
+
+  // Intercept window.open / target="_blank"
+  bwc.setWindowOpenHandler(({ url }) => {
+    createTab(url);
+    return { action: 'deny' };
+  });
+
+  const tabObj = {
+    id: tabId,
+    view: view,
+    title: 'New Tab',
+    url: initialUrl || 'auto://home',
+    isLoading: true,
+    canGoBack: false,
+    canGoForward: false
+  };
+
+  tabs.set(tabId, tabObj);
 
   // Track browser events
   bwc.on('did-start-navigation', (e, url) => {
-    broadcastBrowserState();
+    tabObj.url = url;
+    if (tabId === activeTabId) broadcastBrowserState();
+    broadcastTabs();
   });
   bwc.on('did-navigate', (e, url) => {
-    broadcastBrowserState();
+    tabObj.url = url;
+    if (tabId === activeTabId) broadcastBrowserState();
+    broadcastTabs();
   });
   bwc.on('did-navigate-in-page', (e, url) => {
-    broadcastBrowserState();
+    tabObj.url = url;
+    if (tabId === activeTabId) broadcastBrowserState();
+    broadcastTabs();
   });
   bwc.on('did-start-loading', () => {
-    broadcastBrowserState();
+    tabObj.isLoading = true;
+    if (tabId === activeTabId) broadcastBrowserState();
+    broadcastTabs();
   });
   bwc.on('did-stop-loading', () => {
-    broadcastBrowserState();
+    tabObj.isLoading = false;
+    if (tabId === activeTabId) broadcastBrowserState();
+    broadcastTabs();
   });
   bwc.on('page-title-updated', (e, title) => {
-    broadcastBrowserState();
+    tabObj.title = title;
+    if (tabId === activeTabId) broadcastBrowserState();
+    broadcastTabs();
   });
 
-  // Attach Chrome DevTools Protocol to browser view
+  // Attach CDP for network recording
   attachCDP(bwc);
 
-  // Initialize interaction manager for button controls & element picker
-  interactionManager = new InteractionManager(bwc, ROOT_DIR);
-
-  // Intercept element picker events from browserView
+  // Intercept element picker events from webContents
   bwc.on('console-message', (e, level, message) => {
     if (typeof message === 'string') {
       if (message.startsWith('__AB_ELEMENT_PICKED__:')) {
@@ -254,7 +291,7 @@ function createMainWindow() {
     }
   });
 
-  // Intercept tel: phone links and dialer triggers to capture mobile numbers directly
+  // Intercept tel: phone links
   bwc.on('will-navigate', (event, navUrl) => {
     if (navUrl && navUrl.startsWith('tel:')) {
       event.preventDefault();
@@ -264,20 +301,153 @@ function createMainWindow() {
     }
   });
 
-  // Load the initial home page
-  const homeUrl = settings.homeUrl || 'https://httpbin.org';
-  bwc.loadURL(homeUrl);
+  // Load URL
+  const homeFile = path.join(ROOT_DIR, 'ui', 'home.html');
+  const targetUrl = (initialUrl || '').trim();
+  if (!targetUrl || targetUrl === 'auto://home' || targetUrl === 'about:home' || targetUrl === 'about:blank' || targetUrl === 'https://httpbin.org') {
+    bwc.loadFile(homeFile);
+  } else {
+    let finalUrl = targetUrl;
+    if (!/^https?:\/\//i.test(finalUrl) && !/^file:\/\//i.test(finalUrl)) {
+      if (finalUrl.includes('.') && !finalUrl.includes(' ')) {
+        finalUrl = 'https://' + finalUrl;
+      } else {
+        finalUrl = `https://www.google.com/search?q=${encodeURIComponent(finalUrl)}`;
+      }
+    }
+    bwc.loadURL(finalUrl);
+  }
+
+  switchTab(tabId);
+  return tabId;
+}
+
+function switchTab(tabId) {
+  if (!tabs.has(tabId)) return;
+  activeTabId = tabId;
+
+  for (const [id, tab] of tabs.entries()) {
+    if (id === tabId) {
+      if (!currentBrowserBounds.hidden && currentBrowserBounds.width > 0 && currentBrowserBounds.height > 0) {
+        tab.view.setVisible(true);
+        tab.view.setBounds({
+          x: Math.round(currentBrowserBounds.x),
+          y: Math.round(currentBrowserBounds.y),
+          width: Math.round(currentBrowserBounds.width),
+          height: Math.round(currentBrowserBounds.height)
+        });
+      } else {
+        tab.view.setVisible(false);
+      }
+      if (interactionManager) {
+        interactionManager.webContents = tab.view.webContents;
+      }
+    } else {
+      tab.view.setVisible(false);
+    }
+  }
+
+  broadcastTabs();
+  broadcastBrowserState();
+}
+
+function closeTab(tabId) {
+  if (!tabs.has(tabId)) return;
+  const tabToClose = tabs.get(tabId);
+  const tabIds = Array.from(tabs.keys());
+  const index = tabIds.indexOf(tabId);
+
+  let nextActiveId = null;
+  if (activeTabId === tabId) {
+    if (tabIds.length > 1) {
+      if (index > 0) {
+        nextActiveId = tabIds[index - 1];
+      } else {
+        nextActiveId = tabIds[index + 1];
+      }
+    }
+  } else {
+    nextActiveId = activeTabId;
+  }
+
+  try {
+    mainWindow.contentView.removeChildView(tabToClose.view);
+    if (!tabToClose.view.webContents.isDestroyed()) {
+      tabToClose.view.webContents.close();
+    }
+  } catch (e) {
+    console.warn('Error removing tab view:', e);
+  }
+
+  tabs.delete(tabId);
+
+  if (tabs.size === 0) {
+    createTab('auto://home');
+  } else if (nextActiveId) {
+    switchTab(nextActiveId);
+  } else {
+    broadcastTabs();
+  }
+}
+
+function createMainWindow() {
+  loadSettings();
+  recorder = new NetworkRecorder(ROOT_DIR, settings);
+
+  let winWidth = 1200;
+  let winHeight = 760;
+  try {
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+    winWidth = Math.min(1280, Math.max(750, screenWidth - 40));
+    winHeight = Math.min(840, Math.max(500, screenHeight - 60));
+  } catch (e) {
+    console.warn('Could not read display workAreaSize:', e);
+  }
+
+  mainWindow = new BrowserWindow({
+    width: winWidth,
+    height: winHeight,
+    minWidth: 500,
+    minHeight: 400,
+    center: true,
+    title: 'Auto_Browser - Custom Chromium Browser & Network Recorder',
+    backgroundColor: '#0d1117',
+    autoHideMenuBar: true,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#080c16',
+      symbolColor: '#94a3b8',
+      height: 38
+    },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  Menu.setApplicationMenu(null);
+  mainWindow.setMenu(null);
+
+  // Initialize interaction manager
+  interactionManager = new InteractionManager(null, ROOT_DIR);
 
   // Auto record if configured
   if (settings.autoRecord) {
     recorder.startSession();
   }
 
+  // Create initial tab
+  createTab(settings.homeUrl || 'auto://home');
+
   // Load UI into mainWindow
   mainWindow.loadFile(path.join(ROOT_DIR, 'ui', 'index.html'));
 
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('UI finished load successfully');
+    broadcastTabs();
+    broadcastBrowserState();
   });
 
   mainWindow.webContents.on('did-fail-load', (e, code, desc) => {
@@ -301,19 +471,42 @@ function createMainWindow() {
 
   mainWindow.on('closed', () => {
     if (recorder) recorder.stopSession();
-    browserView = null;
+    tabs.clear();
+    activeTabId = null;
     mainWindow = null;
   });
 }
 
-// IPC Handlers
+// IPC Handlers - Tab Management
+ipcMain.handle('tabs:create', (event, url) => {
+  return createTab(url || 'auto://home');
+});
+
+ipcMain.handle('tabs:switch', (event, tabId) => {
+  switchTab(tabId);
+  return true;
+});
+
+ipcMain.handle('tabs:close', (event, tabId) => {
+  closeTab(tabId);
+  return true;
+});
+
+ipcMain.handle('tabs:getAll', () => {
+  return getTabsSummary();
+});
+
+// Browser Controls & Bounds
 ipcMain.handle('browser:updateBounds', (event, bounds) => {
-  if (!browserView || !mainWindow) return;
+  currentBrowserBounds = bounds || { x: 0, y: 0, width: 0, height: 0, hidden: true };
+  const activeTab = getActiveTab();
+  if (!activeTab || !mainWindow) return;
+
   if (!bounds || bounds.width <= 0 || bounds.height <= 0 || bounds.hidden) {
-    browserView.setVisible(false);
+    activeTab.view.setVisible(false);
   } else {
-    browserView.setVisible(true);
-    browserView.setBounds({
+    activeTab.view.setVisible(true);
+    activeTab.view.setBounds({
       x: Math.round(bounds.x),
       y: Math.round(bounds.y),
       width: Math.round(bounds.width),
@@ -323,65 +516,77 @@ ipcMain.handle('browser:updateBounds', (event, bounds) => {
 });
 
 ipcMain.handle('browser:navigate', async (event, inputUrl) => {
-  if (!browserView) return;
-  let target = inputUrl.trim();
+  const activeTab = getActiveTab();
+  if (!activeTab) return;
+  let target = (inputUrl || '').trim();
   if (!target) return;
+
+  if (target === 'auto://home' || target === 'about:home' || target === 'about:blank') {
+    activeTab.view.webContents.loadFile(path.join(ROOT_DIR, 'ui', 'home.html'));
+    return;
+  }
 
   if (target.toLowerCase().startsWith('javascript:')) {
     const code = target.slice(11);
     try {
-      const res = await browserView.webContents.executeJavaScript(code);
+      const res = await activeTab.view.webContents.executeJavaScript(code);
       return { executed: true, result: res };
     } catch (e) {
       return { executed: false, error: e.message };
     }
   }
 
-  if (!/^https?:\/\//i.test(target) && !/^about:/i.test(target)) {
+  if (!/^https?:\/\//i.test(target) && !/^file:\/\//i.test(target)) {
     if (target.includes('.') && !target.includes(' ')) {
       target = 'https://' + target;
     } else {
       target = `https://www.google.com/search?q=${encodeURIComponent(target)}`;
     }
   }
-  browserView.webContents.loadURL(target);
+  activeTab.view.webContents.loadURL(target);
 });
 
 ipcMain.handle('browser:executeScript', async (event, script) => {
-  if (browserView && !browserView.webContents.isDestroyed()) {
+  const activeTab = getActiveTab();
+  if (activeTab && !activeTab.view.webContents.isDestroyed()) {
     try {
-      const result = await browserView.webContents.executeJavaScript(script);
+      const result = await activeTab.view.webContents.executeJavaScript(script);
       return { success: true, result };
     } catch (err) {
       return { success: false, error: err.message };
     }
   }
-  return { success: false, error: 'browserView unavailable' };
+  return { success: false, error: 'Active browser view unavailable' };
 });
 
 ipcMain.handle('browser:goBack', () => {
-  if (browserView && browserView.webContents.canGoBack()) {
-    browserView.webContents.goBack();
+  const activeTab = getActiveTab();
+  if (activeTab && activeTab.view.webContents.canGoBack()) {
+    activeTab.view.webContents.goBack();
   }
 });
 
 ipcMain.handle('browser:goForward', () => {
-  if (browserView && browserView.webContents.canGoForward()) {
-    browserView.webContents.goForward();
+  const activeTab = getActiveTab();
+  if (activeTab && activeTab.view.webContents.canGoForward()) {
+    activeTab.view.webContents.goForward();
   }
 });
 
 ipcMain.handle('browser:reload', () => {
-  if (browserView) browserView.webContents.reload();
+  const activeTab = getActiveTab();
+  if (activeTab) activeTab.view.webContents.reload();
 });
 
 ipcMain.handle('browser:stop', () => {
-  if (browserView) browserView.webContents.stop();
+  const activeTab = getActiveTab();
+  if (activeTab) activeTab.view.webContents.stop();
 });
 
 ipcMain.handle('browser:openDevTools', () => {
-  if (browserView) {
-    browserView.webContents.openDevTools({ mode: 'detach' });
+  const activeTab = getActiveTab();
+  if (activeTab) {
+    activeTab.view.webContents.openDevTools({ mode: 'detach' });
   }
 });
 
@@ -560,6 +765,101 @@ ipcMain.handle('interaction:evaluate', async (event, expression) => {
   return { success: false, error: 'Interaction manager not available' };
 });
 
+// Chrome 3-Dots Popup Menu Handler (Native OS overlay)
+ipcMain.handle('app:showMenu', (event, { x, y, isInspectorVisible, isRecording, isPaused } = {}) => {
+  if (!mainWindow) return;
+  const menu = Menu.buildFromTemplate([
+    {
+      label: '📑 New Tab',
+      accelerator: 'Ctrl+T',
+      click: () => {
+        createTab('auto://home');
+      }
+    },
+    {
+      label: '✖ Close Tab',
+      accelerator: 'Ctrl+W',
+      click: () => {
+        if (activeTabId) closeTab(activeTabId);
+      }
+    },
+    { type: 'separator' },
+    {
+      label: '📊 Network Inspector',
+      type: 'checkbox',
+      checked: !!isInspectorVisible,
+      click: () => {
+        mainWindow.webContents.send('menu:action', 'toggleInspector');
+      }
+    },
+    {
+      label: '🎯 Pick Element',
+      accelerator: 'Ctrl+Shift+C',
+      click: () => {
+        mainWindow.webContents.send('menu:action', 'pickElement');
+      }
+    },
+    {
+      label: '✍ Button Controls Panel',
+      click: () => {
+        mainWindow.webContents.send('menu:action', 'toggleControls');
+      }
+    },
+    {
+      label: '🛠️ Chromium DevTools',
+      accelerator: 'F12',
+      click: () => {
+        mainWindow.webContents.send('menu:action', 'openDevTools');
+      }
+    },
+    { type: 'separator' },
+    {
+      label: isPaused ? '▶ Resume Recording' : '⏸ Pause Recording',
+      enabled: !!isRecording,
+      click: () => {
+        mainWindow.webContents.send('menu:action', 'togglePause');
+      }
+    },
+    {
+      label: '🔄 New Session',
+      click: () => {
+        mainWindow.webContents.send('menu:action', 'newSession');
+      }
+    },
+    {
+      label: '📁 Saved Sessions...',
+      click: () => {
+        mainWindow.webContents.send('menu:action', 'openSessions');
+      }
+    },
+    {
+      label: '💾 Export HAR Archive...',
+      click: () => {
+        mainWindow.webContents.send('menu:action', 'exportHar');
+      }
+    },
+    {
+      label: '🧹 Clear Network Log',
+      click: () => {
+        mainWindow.webContents.send('menu:action', 'clearLog');
+      }
+    },
+    { type: 'separator' },
+    {
+      label: '⚙️ Settings...',
+      click: () => {
+        mainWindow.webContents.send('menu:action', 'openSettings');
+      }
+    }
+  ]);
+
+  menu.popup({
+    window: mainWindow,
+    x: Math.round(x || 0),
+    y: Math.round(y || 0)
+  });
+});
+
 function startLocalAutomationServer() {
   const jsonResponse = (res, statusCode, data) => {
     res.writeHead(statusCode, { 'Content-Type': 'application/json' });
@@ -608,8 +908,9 @@ function startLocalAutomationServer() {
           if (!/^https?:\/\//i.test(target) && !/^about:/i.test(target)) {
             target = 'https://' + target;
           }
-          if (browserView && !browserView.webContents.isDestroyed()) {
-            browserView.webContents.loadURL(target);
+          const activeTab = getActiveTab();
+          if (activeTab && !activeTab.view.webContents.isDestroyed()) {
+            activeTab.view.webContents.loadURL(target);
             return jsonResponse(res, 200, { success: true, url: target });
           }
           return jsonResponse(res, 503, { error: 'Browser view not available' });
@@ -690,9 +991,10 @@ function startLocalAutomationServer() {
 
         case '/exec': {
           if (!data.script) return jsonResponse(res, 400, { error: 'Missing script parameter' });
-          if (browserView && !browserView.webContents.isDestroyed()) {
+          const activeTab = getActiveTab();
+          if (activeTab && !activeTab.view.webContents.isDestroyed()) {
             try {
-              const result = await browserView.webContents.executeJavaScript(data.script);
+              const result = await activeTab.view.webContents.executeJavaScript(data.script);
               return jsonResponse(res, 200, { success: true, result });
             } catch (err) {
               return jsonResponse(res, 500, { error: err.message });
