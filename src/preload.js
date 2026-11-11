@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('api', {
   resumeRecording: () => ipcRenderer.invoke('recorder:resume'),
   stopRecording: () => ipcRenderer.invoke('recorder:stop'),
   getStatus: () => ipcRenderer.invoke('recorder:getStatus'),
+  getActions: () => ipcRenderer.invoke('recorder:getActions'),
   clearCurrentRecords: () => ipcRenderer.invoke('recorder:clear'),
   listSessions: () => ipcRenderer.invoke('recorder:listSessions'),
   loadSession: (sessionId) => ipcRenderer.invoke('recorder:loadSession', sessionId),
@@ -99,6 +100,11 @@ contextBridge.exposeInMainWorld('api', {
     const handler = (event, data) => callback(data);
     ipcRenderer.on('network:event', handler);
     return () => ipcRenderer.removeListener('network:event', handler);
+  },
+  onActionRecorded: (callback) => {
+    const handler = (event, data) => callback(data);
+    ipcRenderer.on('action:recorded', handler);
+    return () => ipcRenderer.removeListener('action:recorded', handler);
   },
   onBrowserState: (callback) => {
     const handler = (event, data) => callback(data);

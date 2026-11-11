@@ -41,6 +41,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Metrics
   const metricRequests = document.getElementById('metric-requests');
+  const metricActions = document.getElementById('metric-actions');
   const metricErrors = document.getElementById('metric-errors');
   const metricBytes = document.getElementById('metric-bytes');
 
@@ -53,6 +54,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const requestsTbody = document.getElementById('requests-tbody');
   const tableEmptyState = document.getElementById('table-empty-state');
   const tableContainer = document.getElementById('table-container');
+  const actionsContainer = document.getElementById('actions-container');
+  const actionsTbody = document.getElementById('actions-tbody');
+  const actionsEmptyState = document.getElementById('actions-empty-state');
+  const actionsTabCount = document.getElementById('actions-tab-count');
 
   // Detail Panel Elements
   const detailPanel = document.getElementById('detail-panel');
@@ -226,6 +231,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let currentSearchQuery = '';
   let selectedRequestId = null;
   const records = new Map(); // requestId -> record
+  const recordedActions = [];
 
   // Initialize workspace layout
   workspace.className = 'layout-browser';
@@ -561,11 +567,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   btnClear.addEventListener('click', async () => {
     await window.api.clearCurrentRecords();
     records.clear();
+    recordedActions.length = 0;
     requestsTbody.innerHTML = '';
     tableEmptyState.style.display = 'flex';
+    if (actionsTbody) actionsTbody.innerHTML = '';
+    if (actionsEmptyState) actionsEmptyState.style.display = 'flex';
     selectedRequestId = null;
     detailPanel.classList.add('hidden');
     metricRequests.textContent = '0';
+    if (metricActions) metricActions.textContent = '0';
+    if (actionsTabCount) actionsTabCount.textContent = '0';
     metricErrors.textContent = '0';
     metricBytes.textContent = '0 KB';
   });
@@ -629,8 +640,83 @@ document.addEventListener('DOMContentLoaded', async () => {
   function updateMetrics(stats) {
     if (!stats) return;
     metricRequests.textContent = stats.totalRequests || 0;
+    if (metricActions) metricActions.textContent = stats.totalActions || recordedActions.length || 0;
+    if (actionsTabCount) actionsTabCount.textContent = stats.totalActions || recordedActions.length || 0;
     metricErrors.textContent = stats.failedRequests || 0;
     metricBytes.textContent = formatBytes(stats.totalBytes || 0);
+  }
+
+  function formatActionDetail(act) {
+    if (!act) return '-';
+    if (act.action === 'keydown') {
+      const m = act.meta || {};
+      const mods = [m.ctrlKey && 'Ctrl', m.altKey && 'Alt', m.shiftKey && 'Shift', m.metaKey && 'Meta'].filter(Boolean);
+      return mods.length ? `${mods.join('+')}+${m.key || ''}` : `[${m.key || ''}]`;
+    }
+    if (act.action === 'scroll') {
+      return `scrollX=${act.meta?.scrollX || 0}, scrollY=${act.meta?.scrollY || 0}`;
+    }
+    if (act.action === 'file_select') {
+      const names = (act.meta?.files || []).map(f => f.name).join(', ');
+      return names || 'file(s)';
+    }
+    if (act.action === 'check' || act.action === 'radio') {
+      return `${act.target?.checked ? 'checked' : 'unchecked'}${act.target?.value ? ' (' + act.target.value + ')' : ''}`;
+    }
+    const t = act.target || {};
+    if (t.selectedText) return t.selectedText;
+    if (t.value !== null && t.value !== undefined && t.value !== '') {
+      return t.isPassword ? '••••••••' : String(t.value);
+    }
+    if (t.text) return t.text;
+    return '-';
+  }
+
+  function renderActionRow(act, stepNum) {
+    if (!actionsTbody || !act) return;
+    const tr = document.createElement('tr');
+    const sel = act.target?.selector || act.target?.cssPath || (act.action === 'navigate' ? '(page navigation)' : '-');
+    const val = formatActionDetail(act);
+    const timeStr = act.wallTime ? new Date(act.wallTime).toLocaleTimeString() : '-';
+
+    tr.dataset.action = act.action || '';
+    tr.dataset.selector = sel;
+    tr.dataset.value = val;
+    tr.dataset.url = act.url || '';
+
+    tr.innerHTML = `
+      <td class="col-step">${stepNum}</td>
+      <td class="col-act-time">${escapeHtml(timeStr)}</td>
+      <td class="col-act-type"><span class="action-type-badge ${escapeHtml(act.action || '')}">${escapeHtml(act.action || '')}</span></td>
+      <td class="col-act-selector" title="${escapeHtml(sel)}">${escapeHtml(sel)}</td>
+      <td class="col-act-value" title="${escapeHtml(val)}">${escapeHtml(val)}</td>
+      <td class="col-act-url" title="${escapeHtml(act.url || '')}">${escapeHtml(act.url || '')}</td>
+    `;
+
+    tr.addEventListener('click', () => {
+      if (sel && sel !== '-' && sel !== '(page navigation)') {
+        const selInput = document.getElementById('interaction-selector-input');
+        if (selInput) {
+          selInput.value = sel;
+          selInput.dispatchEvent(new Event('input'));
+        }
+        if (typeof enableActionButtons === 'function') enableActionButtons(true);
+      }
+    });
+
+    actionsTbody.appendChild(tr);
+    if (actionsEmptyState) actionsEmptyState.style.display = 'none';
+    applyFilterToActionRow(tr);
+  }
+
+  function applyFilterToActionRow(tr) {
+    const query = currentSearchQuery.toLowerCase();
+    if (!query) {
+      tr.style.display = '';
+      return;
+    }
+    const haystack = [tr.dataset.action, tr.dataset.selector, tr.dataset.value, tr.dataset.url].join(' ').toLowerCase();
+    tr.style.display = haystack.includes(query) ? '' : 'none';
   }
 
   function renderRow(record) {
@@ -717,6 +803,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  if (window.api && window.api.onActionRecorded) {
+    window.api.onActionRecorded((event) => {
+      const { data, stats } = event || {};
+      if (!data) return;
+      recordedActions.push(data);
+      renderActionRow(data, recordedActions.length);
+      updateMetrics(stats);
+    });
+  }
+
   // =========================================================================
   // Filtering & Searching
   // =========================================================================
@@ -747,8 +843,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function applyAllFilters() {
-    const rows = requestsTbody.querySelectorAll('tr');
-    rows.forEach(applyFilterToRow);
+    if (currentFilterType === 'actions') {
+      if (tableContainer) tableContainer.classList.add('hidden');
+      if (detailPanel) detailPanel.classList.add('hidden');
+      if (actionsContainer) actionsContainer.classList.remove('hidden');
+      if (actionsTbody) {
+        actionsTbody.querySelectorAll('tr').forEach(applyFilterToActionRow);
+      }
+    } else {
+      if (actionsContainer) actionsContainer.classList.add('hidden');
+      if (tableContainer) tableContainer.classList.remove('hidden');
+      const rows = requestsTbody.querySelectorAll('tr');
+      rows.forEach(applyFilterToRow);
+    }
   }
 
   filterInput.addEventListener('input', (e) => {
@@ -1236,7 +1343,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         <div class="session-item-info">
           <h4>${s.id}</h4>
           <div class="session-item-meta">
-            ${s.requestCount || 0} requests &bull; ${formatBytes(s.totalBytes || 0)} &bull; ${s.startTime ? new Date(s.startTime).toLocaleString() : 'N/A'}
+            ${s.requestCount || 0} requests &bull; ${s.actionCount || 0} actions &bull; ${formatBytes(s.totalBytes || 0)} &bull; ${s.startTime ? new Date(s.startTime).toLocaleString() : 'N/A'}
           </div>
         </div>
         <div class="session-item-actions">
@@ -1253,7 +1360,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const loaded = await window.api.loadSession(id);
         if (loaded && loaded.records) {
           records.clear();
+          recordedActions.length = 0;
           requestsTbody.innerHTML = '';
+          if (actionsTbody) actionsTbody.innerHTML = '';
+          if (actionsEmptyState) actionsEmptyState.style.display = 'flex';
           activeSessionId = id;
           activeSessionIdElem.textContent = id;
 
@@ -1261,6 +1371,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             records.set(rec.requestId, rec);
             renderRow(rec);
           }
+          if (Array.isArray(loaded.actions)) {
+            for (const act of loaded.actions) {
+              recordedActions.push(act);
+              renderActionRow(act, recordedActions.length);
+            }
+          }
+          if (metricActions) metricActions.textContent = recordedActions.length;
+          if (actionsTabCount) actionsTabCount.textContent = recordedActions.length;
           if (loaded.meta) {
             metricRequests.textContent = loaded.meta.requestCount || 0;
             metricErrors.textContent = loaded.meta.failedRequests || 0;

@@ -75,6 +75,32 @@ const finished = recorder.recordFinished(
 
 console.log('Recorded finished. Total bytes:', recorder.stats.totalBytes);
 
+// 3.5 Simulate Action Recording
+const act1 = recorder.recordAction({
+  action: 'click',
+  url: 'https://httpbin.org/forms/post',
+  pageTitle: 'Form Test',
+  target: {
+    tagName: 'button',
+    selector: 'button[type="submit"]',
+    cssPath: 'form > button:nth-child(1)',
+    xpath: '/html/body[1]/form[1]/button[1]',
+    text: 'Submit order'
+  },
+  coordinates: { clientX: 120, clientY: 240 }
+});
+const act2 = recorder.recordAction({
+  action: 'input',
+  url: 'https://httpbin.org/forms/post',
+  pageTitle: 'Form Test',
+  target: {
+    tagName: 'input',
+    selector: 'input[name="custname"]',
+    value: 'Shahid'
+  }
+});
+console.log('Recorded actions count:', recorder.stats.totalActions);
+
 // 4. Stop session
 recorder.stopSession();
 console.log('Session stopped. Status:', recorder.status);
@@ -82,6 +108,7 @@ console.log('Session stopped. Status:', recorder.status);
 // 5. Verify files exist on disk
 const reqJsonlExists = fs.existsSync(session.requestsJsonl);
 const resJsonlExists = fs.existsSync(session.responsesJsonl);
+const actJsonlExists = fs.existsSync(session.actionsJsonl);
 const metaExists = fs.existsSync(session.metaPath);
 const bodyFile = path.join(session.bodiesPath, 'req-101_res.json');
 const bodyExists = fs.existsSync(bodyFile);
@@ -89,12 +116,17 @@ const bodyExists = fs.existsSync(bodyFile);
 console.log('File verification:');
 console.log('  requests.jsonl exists:', reqJsonlExists);
 console.log('  responses.jsonl exists:', resJsonlExists);
+console.log('  actions.jsonl exists:', actJsonlExists);
 console.log('  session_meta.json exists:', metaExists);
 console.log('  body file exists:', bodyExists);
 
 // 6. Test session loading
 const loaded = recorder.loadSession('test_session_001');
 console.log('Loaded records count:', loaded.records.length);
+console.log('Loaded actions count:', loaded.actions.length);
+if (!act1 || !act2 || !actJsonlExists || loaded.actions.length !== 2) {
+  throw new Error('Action recording verification failed!');
+}
 
 // 7. Test HAR export
 const har = recorder.exportHAR('test_session_001');

@@ -28,12 +28,14 @@ class NetworkRecorder {
     this.status = 'idle'; // 'idle' | 'recording' | 'paused'
     this.currentSession = null;
     this.records = new Map(); // requestId -> combined record
+    this.actions = []; // recorded user interaction events
     this.capturedTokens = new Map(); // uniqueKey -> token object
     this.stats = {
       totalRequests: 0,
       totalResponses: 0,
       failedRequests: 0,
       totalBytes: 0,
+      totalActions: 0,
       startTime: null
     };
 
@@ -72,22 +74,26 @@ class NetworkRecorder {
       analysePath: analysePath,
       requestsJsonl: path.join(sessionPath, 'requests.jsonl'),
       responsesJsonl: path.join(sessionPath, 'responses.jsonl'),
+      actionsJsonl: path.join(sessionPath, 'actions.jsonl'),
       tokensJson: path.join(sessionPath, 'tokens.json'),
       metaPath: path.join(sessionPath, 'session_meta.json'),
       startTime: new Date().toISOString(),
       endTime: null,
       requestCount: 0,
       responseCount: 0,
+      actionCount: 0,
       totalBytes: 0
     };
 
     this.records.clear();
+    this.actions = [];
     this.capturedTokens.clear();
     this.stats = {
       totalRequests: 0,
       totalResponses: 0,
       failedRequests: 0,
       totalBytes: 0,
+      totalActions: 0,
       startTime: Date.now()
     };
     this.status = 'recording';
@@ -134,6 +140,7 @@ class NetworkRecorder {
       responseCount: this.stats.totalResponses,
       failedRequests: this.stats.failedRequests,
       totalBytes: this.stats.totalBytes,
+      actionCount: this.stats.totalActions || 0,
       capturedTokensCount: this.capturedTokens ? this.capturedTokens.size : 0,
       status: this.status
     };
@@ -496,6 +503,43 @@ class NetworkRecorder {
     return item;
   }
 
+  /**
+   * Persist a captured DOM/navigation user action into actions.jsonl when recording.
+   * @param {Object} actionData - Normalized action payload from browser DOM or navigation listener
+   * @returns {Object|null} The recorded action entry, or null if recorder is not active
+   */
+  recordAction(actionData) {
+    if (this.status !== 'recording' || !actionData || !actionData.action) return null;
+
+    this.stats.totalActions = (this.stats.totalActions || 0) + 1;
+    const actionRecord = {
+      actionId: `act_${this.stats.totalActions}`,
+      timestamp: actionData.timestamp || Date.now(),
+      wallTime: actionData.wallTime || new Date().toISOString(),
+      action: actionData.action,
+      url: actionData.url || '',
+      pageTitle: actionData.pageTitle || '',
+      tabId: actionData.tabId || null,
+      isTopFrame: actionData.isTopFrame !== undefined ? !!actionData.isTopFrame : true,
+      target: actionData.target || null,
+      coordinates: actionData.coordinates || null,
+      meta: actionData.meta || {}
+    };
+
+    if (this.currentSession) {
+      this.currentSession.actionCount = this.stats.totalActions;
+      try {
+        fs.appendFileSync(this.currentSession.actionsJsonl, JSON.stringify(actionRecord) + '\n', 'utf-8');
+      } catch (err) {
+        console.error('Failed appending to actions.jsonl:', err);
+      }
+      this.writeMeta();
+    }
+
+    this.actions.push(actionRecord);
+    return actionRecord;
+  }
+
   getExtensionForMime(mimeType) {
     if (!mimeType) return 'bin';
     if (mimeType.includes('json')) return 'json';
@@ -621,10 +665,22 @@ class NetworkRecorder {
       }
     }
 
+    const actionsFile = path.join(sessionPath, 'actions.jsonl');
+    const actions = [];
+    if (fs.existsSync(actionsFile)) {
+      const actionLines = fs.readFileSync(actionsFile, 'utf-8').split('\n');
+      for (const line of actionLines) {
+        if (line.trim()) {
+          try { actions.push(JSON.parse(line)); } catch (e) {}
+        }
+      }
+    }
+
     return {
       meta,
       records: combined,
-      tokens
+      tokens,
+      actions
     };
   }
 

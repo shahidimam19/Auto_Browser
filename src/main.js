@@ -25,6 +25,68 @@ let recorder = null;
 let interactionManager = null;
 let settings = {};
 const settingsPath = path.join(ROOT_DIR, 'settings.json');
+let cachedActionRecorderScript = null;
+
+/**
+ * Load templates/action-recorder.js from disk (cached).
+ * @returns {string}
+ */
+function getActionRecorderScript() {
+  if (cachedActionRecorderScript !== null) return cachedActionRecorderScript;
+  try {
+    const scriptPath = path.join(ROOT_DIR, 'templates', 'action-recorder.js');
+    if (fs.existsSync(scriptPath)) {
+      cachedActionRecorderScript = fs.readFileSync(scriptPath, 'utf-8');
+      return cachedActionRecorderScript;
+    }
+  } catch (e) {
+    console.error('Failed loading templates/action-recorder.js:', e);
+  }
+  return '';
+}
+
+/**
+ * Find the tabId associated with a given WebContents instance.
+ * @param {Electron.WebContents} webContents
+ * @returns {string|null}
+ */
+function findTabIdByWebContents(webContents) {
+  for (const [id, tab] of tabs.entries()) {
+    if (tab.view && tab.view.webContents === webContents) {
+      return id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Record a user action and broadcast it to the UI when recording is active.
+ * @param {Object} actionData
+ */
+function recordAndBroadcastAction(actionData) {
+  if (!recorder) return null;
+  const recorded = recorder.recordAction(actionData);
+  if (recorded) {
+    sendToUI('action:recorded', { data: recorded, stats: recorder.stats });
+  }
+  return recorded;
+}
+
+/**
+ * Parse serialized action JSON from CDP binding or console fallback.
+ * @param {string} jsonStr
+ * @param {string|null} tabId
+ */
+function handleActionPayloadJson(jsonStr, tabId) {
+  if (!recorder || recorder.status !== 'recording') return;
+  try {
+    const parsed = JSON.parse(jsonStr);
+    parsed.tabId = tabId;
+    recordAndBroadcastAction(parsed);
+  } catch (err) {
+    console.error('Failed parsing recorded action payload:', err);
+  }
+}
 
 function loadSettings() {
   try {
@@ -164,6 +226,17 @@ async function attachCDP(webContents) {
         if (updated) {
           sendToUI('network:event', { type: 'failed', data: updated, stats: recorder.stats });
         }
+      } else if (method === 'Runtime.bindingCalled') {
+        if (params.name === '__abRecordAction' && params.payload) {
+          handleActionPayloadJson(params.payload, findTabIdByWebContents(webContents));
+        }
+      } else if (method === 'Runtime.consoleAPICalled') {
+        if (params.type === 'debug' && Array.isArray(params.args) && params.args.length > 0) {
+          const msg = params.args[0] && params.args[0].value;
+          if (typeof msg === 'string' && msg.startsWith('__AB_ACTION__:')) {
+            handleActionPayloadJson(msg.slice(14), findTabIdByWebContents(webContents));
+          }
+        }
       }
     });
 
@@ -234,6 +307,22 @@ async function attachCDP(webContents) {
     try {
       await webContents.debugger.sendCommand('DOM.enable');
       await webContents.debugger.sendCommand('Runtime.enable');
+      await webContents.debugger.sendCommand('Runtime.addBinding', { name: '__abRecordAction' });
+
+      const actionRecorderSource = getActionRecorderScript();
+      if (actionRecorderSource) {
+        await webContents.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', {
+          source: actionRecorderSource
+        });
+        // Also inject into currently loaded page (if any)
+        try {
+          if (!webContents.isDestroyed()) {
+            await webContents.debugger.sendCommand('Runtime.evaluate', {
+              expression: actionRecorderSource
+            });
+          }
+        } catch (evalErr) {}
+      }
     } catch (e) {
       console.warn('DOM/Runtime enable notice:', e.message);
     }
@@ -296,16 +385,23 @@ function createTab(initialUrl = 'auto://home') {
     if (tabId === activeTabId) broadcastBrowserState();
     broadcastTabs();
   });
-  bwc.on('did-navigate', (e, url) => {
+  const handleNavigation = (url, inPage) => {
     tabObj.url = url;
     if (tabId === activeTabId) broadcastBrowserState();
     broadcastTabs();
-  });
-  bwc.on('did-navigate-in-page', (e, url) => {
-    tabObj.url = url;
-    if (tabId === activeTabId) broadcastBrowserState();
-    broadcastTabs();
-  });
+    if (recorder && recorder.status === 'recording' && url && /^https?:\/\//i.test(url) && tabObj.lastRecordedNavUrl !== url) {
+      tabObj.lastRecordedNavUrl = url;
+      recordAndBroadcastAction({
+        action: 'navigate',
+        url,
+        pageTitle: tabObj.title || '',
+        tabId,
+        meta: { inPage }
+      });
+    }
+  };
+  bwc.on('did-navigate', (e, url) => handleNavigation(url, false));
+  bwc.on('did-navigate-in-page', (e, url) => handleNavigation(url, true));
   bwc.on('did-start-loading', () => {
     tabObj.isLoading = true;
     if (tabId === activeTabId) broadcastBrowserState();
@@ -662,6 +758,9 @@ ipcMain.handle('browser:openExternal', (event, url) => {
 // Recorder IPC Handlers
 ipcMain.handle('recorder:start', (event, customName) => {
   if (!recorder) return null;
+  for (const tab of tabs.values()) {
+    tab.lastRecordedNavUrl = null;
+  }
   const session = recorder.startSession(customName);
   return { status: recorder.status, session, stats: recorder.stats };
 });
@@ -694,9 +793,15 @@ ipcMain.handle('recorder:getStatus', () => {
 ipcMain.handle('recorder:clear', () => {
   if (recorder) {
     recorder.records.clear();
-    recorder.stats = { totalRequests: 0, totalResponses: 0, failedRequests: 0, totalBytes: 0, startTime: Date.now() };
+    recorder.actions = [];
+    recorder.stats = { totalRequests: 0, totalResponses: 0, failedRequests: 0, totalBytes: 0, totalActions: 0, startTime: Date.now() };
   }
   return true;
+});
+
+ipcMain.handle('recorder:getActions', () => {
+  if (!recorder) return [];
+  return recorder.actions || [];
 });
 
 ipcMain.handle('recorder:listSessions', () => {

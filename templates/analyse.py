@@ -25,22 +25,35 @@ def analyze_session(session_dir=None):
 
     req_file = os.path.join(session_dir, 'requests.jsonl')
     res_file = os.path.join(session_dir, 'responses.jsonl')
+    actions_file = os.path.join(session_dir, 'actions.jsonl')
     tokens_file = os.path.join(session_dir, 'tokens.json')
     analyse_dir = os.path.join(session_dir, 'analyse')
 
-    if not os.path.exists(req_file):
-        print("Error: requests.jsonl not found in session folder.")
+    if not os.path.exists(req_file) and not os.path.exists(actions_file):
+        print("Error: Neither requests.jsonl nor actions.jsonl found in session folder.")
         return
 
     requests = []
-    with open(req_file, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                try:
-                    requests.append(json.loads(line))
-                except Exception:
-                    pass
+    if os.path.exists(req_file):
+        with open(req_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        requests.append(json.loads(line))
+                    except Exception:
+                        pass
+
+    actions = []
+    if os.path.exists(actions_file):
+        with open(actions_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        actions.append(json.loads(line))
+                    except Exception:
+                        pass
 
     responses = {}
     if os.path.exists(res_file):
@@ -242,6 +255,7 @@ def analyze_session(session_dir=None):
     print(f"--- Analysis Summary: {os.path.basename(session_dir)} ---")
     print(f"Total Requests: {len(requests)}")
     print(f"Total Responses: {len(responses)}")
+    print(f"User Actions: {len(actions)}")
     print(f"Tokens Captured: {len(token_list)}")
     print(f"Distinct Domains: {len(domain_stats)}")
     for d, count in domain_stats.items():
@@ -259,6 +273,13 @@ def analyze_session(session_dir=None):
     print(f"\nNext.js RSC Routes ({len(rsc_calls)}):")
     for r in rsc_calls:
         print(f"  [{r['method']}] {r['path']}")
+
+    print(f"\nRecorded User Actions ({len(actions)}):")
+    for idx, act in enumerate(actions, 1):
+        tgt = act.get('target') or {}
+        sel = tgt.get('selector') or tgt.get('cssPath') or '-'
+        val = tgt.get('selectedText') or tgt.get('value') or tgt.get('text') or ''
+        print(f"  {idx}. [{act.get('action')}] {sel} {('-> ' + val[:40]) if val else ''}")
 
 if __name__ == '__main__':
     analyze_session()

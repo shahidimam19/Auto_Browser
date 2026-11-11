@@ -18,6 +18,7 @@ function decodeJwt(token) {
 function runAnalysis(sessionDir = path.resolve(__dirname, '..')) {
   const reqFile = path.join(sessionDir, 'requests.jsonl');
   const resFile = path.join(sessionDir, 'responses.jsonl');
+  const actionsFile = path.join(sessionDir, 'actions.jsonl');
   const tokensFile = path.join(sessionDir, 'tokens.json');
   const analyseDir = path.join(sessionDir, 'analyse');
 
@@ -25,15 +26,17 @@ function runAnalysis(sessionDir = path.resolve(__dirname, '..')) {
     fs.mkdirSync(analyseDir, { recursive: true });
   }
 
-  if (!fs.existsSync(reqFile)) {
-    console.error('requests.jsonl not found in session folder.');
+  if (!fs.existsSync(reqFile) && !fs.existsSync(actionsFile)) {
+    console.error('Neither requests.jsonl nor actions.jsonl found in session folder.');
     return;
   }
 
   const requests = [];
-  const reqLines = fs.readFileSync(reqFile, 'utf-8').split('\n').filter(l => l.trim());
-  for (const line of reqLines) {
-    try { requests.push(JSON.parse(line)); } catch (e) {}
+  if (fs.existsSync(reqFile)) {
+    const reqLines = fs.readFileSync(reqFile, 'utf-8').split('\n').filter(l => l.trim());
+    for (const line of reqLines) {
+      try { requests.push(JSON.parse(line)); } catch (e) {}
+    }
   }
 
   const responses = new Map();
@@ -44,6 +47,14 @@ function runAnalysis(sessionDir = path.resolve(__dirname, '..')) {
         const res = JSON.parse(line);
         responses.set(res.requestId, res);
       } catch (e) {}
+    }
+  }
+
+  const actions = [];
+  if (fs.existsSync(actionsFile)) {
+    const actLines = fs.readFileSync(actionsFile, 'utf-8').split('\n').filter(l => l.trim());
+    for (const line of actLines) {
+      try { actions.push(JSON.parse(line)); } catch (e) {}
     }
   }
 
@@ -297,6 +308,7 @@ function runAnalysis(sessionDir = path.resolve(__dirname, '..')) {
     summary: {
       totalRequests: requests.length,
       totalResponses: responses.size,
+      totalActions: actions.length,
       domainsCount: Object.keys(domainStats).length,
       apiCallsCount: apiEndpoints.length,
       rscCallsCount: rscTransitions.length,
@@ -307,6 +319,7 @@ function runAnalysis(sessionDir = path.resolve(__dirname, '..')) {
       statusCodes: statusDistribution,
       authHeadersDetected: Array.from(authHeadersFound)
     },
+    recordedActions: actions,
     tokensCaptured: capturedTokensList,
     workersCaptured: workersList,
     apiEndpoints: apiEndpoints,
@@ -323,10 +336,17 @@ function runAnalysis(sessionDir = path.resolve(__dirname, '..')) {
   const jsonReportPath = path.join(analyseDir, 'analysis_report.json');
   fs.writeFileSync(jsonReportPath, JSON.stringify(analysis, null, 2), 'utf-8');
 
+  const cleanMdCell = (val, maxLen = 80) => {
+    if (val === null || val === undefined) return '-';
+    const s = String(val).replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ').trim();
+    if (!s) return '-';
+    return s.length > maxLen ? s.slice(0, maxLen) + '...' : s;
+  };
+
   let md = `# Session Traffic Analysis Report
 **Session ID:** \`${analysis.sessionId}\`  
 **Analyzed At:** ${analysis.analyzedAt}  
-**Total Requests:** ${analysis.summary.totalRequests} | **Responses:** ${analysis.summary.totalResponses} | **Tokens:** ${capturedTokensList.length} | **Workers Captured:** ${workersList.length}
+**Total Requests:** ${analysis.summary.totalRequests} | **Responses:** ${analysis.summary.totalResponses} | **User Actions:** ${actions.length} | **Tokens:** ${capturedTokensList.length} | **Workers Captured:** ${workersList.length}
 
 ---
 
@@ -377,6 +397,21 @@ ${capturedTokensList.map(t => `| **${t.type}** | \`${t.source}\` | \`${t.name}\`
 | Status Code | Count |
 | :--- | :--- |
 ${Object.entries(statusDistribution).map(([s, c]) => `| \`${s}\` | **${c}** |`).join('\n')}
+
+---
+
+## 7. Recorded User Actions (${actions.length})
+Chronological log of clicks, inputs, selections, key presses, and navigations captured in \`actions.jsonl\`:
+
+| Step | Action | Target Selector | Text / Value | URL |
+| :--- | :--- | :--- | :--- | :--- |
+${actions.map((a, idx) => {
+  const sel = a.target?.selector || a.target?.cssPath || '-';
+  const detail = a.action === 'keydown'
+    ? `[Key: ${a.meta?.key || ''}]`
+    : (a.target?.selectedText || a.target?.value || a.target?.text || '-');
+  return `| ${idx + 1} | \`${a.action}\` | \`${cleanMdCell(sel, 70)}\` | ${cleanMdCell(detail, 50)} | \`${cleanMdCell(a.url, 60)}\` |`;
+}).join('\n') || '| - | None | - | - | - |'}
 `;
 
   const mdReportPath = path.join(analyseDir, 'analysis_report.md');

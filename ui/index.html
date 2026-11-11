@@ -75,6 +75,8 @@
           <div class="menu-metrics-strip">
             <span class="metric-item"><strong id="metric-requests">0</strong> reqs</span>
             <span class="metric-divider">•</span>
+            <span class="metric-item"><strong id="metric-actions">0</strong> acts</span>
+            <span class="metric-divider">•</span>
             <span class="metric-item error-metric"><strong id="metric-errors">0</strong> errs</span>
             <span class="metric-divider">•</span>
             <span class="metric-item"><strong id="metric-bytes">0 KB</strong></span>
@@ -186,6 +188,7 @@
             <button class="pill-filter" data-filter="Media">Media</button>
             <button class="pill-filter" data-filter="WebSocket">WS</button>
             <button class="pill-filter" data-filter="error">Errors</button>
+            <button class="pill-filter" data-filter="actions" id="btn-filter-actions">Actions (<span id="actions-tab-count">0</span>)</button>
           </div>
 
           <div class="filter-options">
@@ -221,6 +224,30 @@
               <svg viewBox="0 0 24 24" width="48" height="48" class="empty-icon"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
               <h3>No Network Activity Recorded Yet</h3>
               <p>Navigate to any website using the address bar above to see live HTTP/HTTPS requests, headers, and payloads recorded in real time.</p>
+            </div>
+          </div>
+
+          <!-- Recorded Actions Table -->
+          <div id="actions-container" class="hidden">
+            <table id="actions-table">
+              <thead>
+                <tr>
+                  <th class="col-step">#</th>
+                  <th class="col-act-time">Time</th>
+                  <th class="col-act-type">Action</th>
+                  <th class="col-act-selector">Target Selector</th>
+                  <th class="col-act-value">Text / Value</th>
+                  <th class="col-act-url">Page URL</th>
+                </tr>
+              </thead>
+              <tbody id="actions-tbody">
+                <!-- Dynamically populated actions -->
+              </tbody>
+            </table>
+            <div id="actions-empty-state" class="empty-state">
+              <svg viewBox="0 0 24 24" width="48" height="48" class="empty-icon"><path fill="currentColor" d="M4 4l16 6.5L12.3 12.3 10.5 20z"/></svg>
+              <h3>No User Actions Recorded Yet</h3>
+              <p>Start recording and click buttons, fill inputs, select options, or navigate pages to automatically log steps to <code>actions.jsonl</code>.</p>
             </div>
           </div>
 
